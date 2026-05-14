@@ -1,10 +1,12 @@
 function running = init_metrics(nT, cfg)
 % INIT_METRICS
 %
-% Candidate-szintu futas kozbeni metrikatarolo inicializalasa.
+% Candidate-szintű futás közbeni metrikatároló inicializálása.
 %
-% A metrikak listaja a cfg.output.scalarMetrics es
-% cfg.output.profileMetrics strukturabol jon.
+% A metrikák listája:
+%   cfg.output.scalarMetrics
+%   cfg.output.profileMetrics
+%   cfg.output.summaryMetrics  opcionális
 
     running = struct();
 
@@ -14,6 +16,7 @@ function running = init_metrics(nT, cfg)
     running.profileSum = struct();
     running.profileMax = struct();
     running.profileMin = struct();
+    running.summary = struct();
 
     % ---------------------------------------------------------------------
     % Scalar metrics
@@ -52,6 +55,18 @@ function running = init_metrics(nT, cfg)
 
             otherwise
                 error('Ismeretlen profile metric mode: %s', string(m.mode));
+        end
+    end
+
+    % ---------------------------------------------------------------------
+    % Summary metrics
+    % ---------------------------------------------------------------------
+    if isfield(cfg.output, 'summaryMetrics')
+
+        for i = 1:numel(cfg.output.summaryMetrics)
+
+            m = cfg.output.summaryMetrics(i);
+            running.summary.(m.name) = NaN;
         end
     end
 end

@@ -1,194 +1,139 @@
-
-function PV = build_pv_cache(tiltX, tiltZ, Pdc_kWp, modulePower_kWp)
-% BUILD_PV_CACHE
-%
-% PV termelesi cache letrehozasa megadott tajolasokra.
-%
-% Fontos:
-%   - NEM kovetel teljes 365 napos eveket
-%   - NEM dobja el a csonka eveket
-%   - minden olyan napot betolt, amelyhez ertelmezheto datum tartozik
-%   - a datum alapjan rendezi a kimenetet
-%
-% Bemenet:
-%   tiltX            : doles [deg], skalar vagy vektor
-%   tiltZ            : tajolas [deg], skalar vagy vektor
-%   Pdc_kWp          : az egyes tajolasokhoz tartozo DC kapacitas [kWp]
-%   modulePower_kWp  : egy modul nevleges teljesitmenye [kWp]
-%
-% Kimenet:
-%   PV(k).Ppv        : PV teljesitmeny [kW], 1 nap
-%   PV(k).timeMinVec : idotengely [min]
-%   PV(k).dt_h       : idolepes [h]
-%   PV(k).timeDay    : datum string
-%   PV(k).date       : datetime datum
-
+function PV = build_pv_cache(tiltX, tiltZ, Pdc_kWp, Ppan_kWp)
+    % BUILD_PV_CACHE - PV adatok dinamikus kinyerése és gyorsítótárazása
+    % Csak a teljes, 365 napos éveket dolgozza fel, a szökőnapokat (Feb 29) szűri.
+    % 
+    % Bemenetek:
+    %   tiltX   : Dőlésszög (pl. 10)
+    %   tiltZ   : Tájolás (pl. [90, 270] Kelet-Nyugat esetén)
+    %   Pdc_kWp : A tájolásokhoz tartozó beépített kapacitás [kWp] (pl. [274, 274])
+    
     persistent PV_MAP
-
-    if nargin < 4 || isempty(modulePower_kWp)
-        modulePower_kWp = 0.5;
-    end
-
-    thisDir = fileparts(mfilename('fullpath'));
-    pvDir = fullfile(thisDir, 'production');
-
+    
+    % Gyorsítótár inicializálása
     if isempty(PV_MAP)
         PV_MAP = containers.Map('KeyType', 'char', 'ValueType', 'any');
     end
-
-    if isscalar(Pdc_kWp) && numel(tiltZ) > 1
-        Pdc_kWp = repmat(Pdc_kWp / numel(tiltZ), 1, numel(tiltZ));
-    end
-
-    if numel(Pdc_kWp) ~= numel(tiltZ)
-        error('Pdc_kWp length must match tiltZ length, or Pdc_kWp must be scalar.');
-    end
-
-    cacheKey = sprintf('X%s_Z%s_P%s_MOD%.6f_DIR%s', ...
-        mat2str(tiltX), mat2str(tiltZ), mat2str(Pdc_kWp), modulePower_kWp, pvDir);
-
+    
+    % Egyedi kulcs generálása a bemenetekből
+    cacheKey = sprintf('X%s_Z%s_P%s', mat2str(tiltX), mat2str(tiltZ), mat2str(Pdc_kWp));
+    
     if PV_MAP.isKey(cacheKey)
-        fprintf('PV reference data loaded from RAM cache.\n');
+        fprintf('PV adatok betöltve a memóriából: %s\n', cacheKey);
         PV = PV_MAP(cacheKey);
         return;
     end
-
-    fprintf('Reading PV reference data from production files...\n');
-
+    
+    fprintf('PV adatok beolvasása a fájlokból: %s\n', cacheKey);
+    
+    % --- MAPPA AUTOMATIKUS KERESÉSE ---
+    thisDir = fileparts(mfilename('fullpath'));
+    pvDir = fullfile(thisDir, 'production');
+    
     files = dir(fullfile(pvDir, '*.mat'));
-
-    if isempty(files)
-        error('No .mat files found in PV folder: %s', pvDir);
-    end
-
     nF = numel(files);
-    dates = nan(nF, 3);
-
+    if nF == 0, error('Hiba: Nem találhatók .mat fájlok a %s mappában!', pvDir); end
+    
+    % =========================================================================
+    % --- DÁTUMOK KINYERÉSE ÉS CSONKA ÉVEK (pl. 2019) KISZŰRÉSE ---
+    % =========================================================================
+    fprintf('Dátumok ellenőrzése és csonka évek kiszűrése...\n');
+    dates = zeros(nF, 3);
+    
+    % Próbáljuk a fájlnévből kinyerni (gyorsabb)
+    parseDate = @(fname) str2double(regexp(fname, '(\d{4})[._-](\d{2})[._-](\d{2})', 'tokens', 'once'));
+    
     for i = 1:nF
-
-        dates(i, :) = local_parse_date_from_filename(files(i).name);
-
-        if any(isnan(dates(i, :)))
-            S = load(fullfile(pvDir, files(i).name), 'resultBuffer');
-
-            if isfield(S, 'resultBuffer') && isfield(S.resultBuffer, 'timeDay')
-                dates(i, :) = local_parse_date_from_string(S.resultBuffer.timeDay);
+        tmp = parseDate(files(i).name);
+        if ~isempty(tmp)
+            dates(i,:) = tmp;
+        else
+            % Fallback: ha nincs a fájlnévben, gyorsan belenézünk a fájlba
+            S_temp = load(fullfile(pvDir, files(i).name), 'resultBuffer');
+            if isfield(S_temp, 'resultBuffer') && isfield(S_temp.resultBuffer, 'timeDay')
+                dStr = S_temp.resultBuffer.timeDay; % pl. '2019.06.03'
+                dates(i,:) = str2double(strsplit(dStr, '.'));
             end
         end
     end
-
-    validDate = ~isnan(dates(:,1));
-    files = files(validDate);
-    dates = dates(validDate, :);
-
-    if isempty(files)
-        error('No PV files with valid dates were found in folder: %s', pvDir);
+    
+    % 1. Szökőnapok (Február 29.) törlése a Standard 365 napos naptárhoz
+    validDays = ~(dates(:,2) == 2 & dates(:,3) == 29);
+    files = files(validDays);
+    dates = dates(validDays, :);
+    
+    % 2. Csak a teljes (365 napos) évek megtartása
+    years = dates(:,1);
+    uniqueYears = unique(years);
+    validYears = [];
+    
+    for y = uniqueYears'
+        daysInYear = sum(years == y);
+        if daysInYear == 365
+            validYears(end+1) = y;
+        else
+            fprintf('  -> Csonka év eldobva: %d (csak %d napot tartalmaz)\n', y, daysInYear);
+        end
     end
-
-    dateSerial = datenum(dates(:,1), dates(:,2), dates(:,3));
-    [~, order] = sort(dateSerial);
-
-    files = files(order);
-    dates = dates(order, :);
-
+    
+    if isempty(validYears)
+        error('Hiba: A szűrés után nem maradt egyetlen teljes (365 napos) év sem a mappában!');
+    end
+    
+    % Fájlok szűrése csak a teljes évekre
+    isFullYear = ismember(years, validYears);
+    files = files(isFullYear);
     nF = numel(files);
+    
+    fprintf('Szűrés kész: %d teljes év (%d nap) kerül a memóriába.\n', numel(validYears), nF);
+    % =========================================================================
 
-    PV(nF) = struct( ...
-        'Ppv', [], ...
-        'timeMinVec', [], ...
-        'dt_h', [], ...
-        'timeDay', '', ...
-        'date', NaT);
-
+    % --- ELŐALLOKÁLÁS A KÉRT FORMÁTUMRA ---
+    PV(nF) = struct('Ppv', [], 'timeMinVec', [], 'dt_h', [], 'timeDay', '');
+    
     for k = 1:nF
-
         fPath = fullfile(pvDir, files(k).name);
         S = load(fPath);
-
-        if ~isfield(S, 'resultBuffer')
-            error('Missing resultBuffer in file: %s', files(k).name);
-        end
-
+        
+        if ~isfield(S, 'resultBuffer'), continue; end
         rb = S.resultBuffer;
-
+        
         timeMinVec = rb.timeVectorMin;
-        resTable = rb.results;
-
-        Ppv_total_kW = zeros(1, numel(timeMinVec));
-
-        for c = 1:numel(tiltZ)
-
-            if isscalar(tiltX)
-                cX = tiltX;
-            else
-                cX = tiltX(c);
-            end
-
+        resTable = rb.results; % A 32x3-as MATLAB Table
+        
+        Ppv_total = zeros(1, length(timeMinVec));
+        
+        % Végigmegyünk a kért dőlés/tájolás párosokon
+        for c = 1:length(tiltZ)
+            if isscalar(tiltX), cX = tiltX; else, cX = tiltX(c); end
             cZ = tiltZ(c);
-            cPower_kWp = Pdc_kWp(c);
-
-            rowIdx = find(resTable.tiltX == cX & resTable.tiltZ == cZ, 1);
-
+            cPower = Pdc_kWp(c);
+            
+            % Keresés a Table-ben
+            rowIdx = find(resTable.tiltX == cX & resTable.tiltZ == cZ);
+            
             if isempty(rowIdx)
-                warning('PV orientation not found: tiltX=%g, tiltZ=%g in %s', ...
-                    cX, cZ, files(k).name);
+                warning('Kihagyva: tiltX=%d, tiltZ=%d nem található a(z) %s fájlban.', cX, cZ, files(k).name);
                 continue;
             end
-
+            
+            % Nyers adat kinyerése és felskálázása
+            % Ellenőrizzük, hogy cellatömb-e, és kicsomagoljuk {} segítségével
             if iscell(resTable.tPDC)
                 tPDC_raw = resTable.tPDC{rowIdx};
             else
                 tPDC_raw = resTable.tPDC(rowIdx, :);
             end
-
-            tPDC_raw = double(tPDC_raw(:).');
-
-            % Feltetelezes:
-            %   tPDC_raw [W] egy modulra.
-            %   Atvaltjuk kW-ra, majd skalazzuk a megadott kWp reszre.
-            Ppv_orientation_kW = (tPDC_raw / 1000) * (cPower_kWp / modulePower_kWp);
-
-            Ppv_total_kW = Ppv_total_kW + Ppv_orientation_kW;
+            
+            Ppv_total = Ppv_total + (tPDC_raw .* cPower / Ppan_kWp);
         end
-
-        PV(k).Ppv = Ppv_total_kW;
-        PV(k).timeMinVec = timeMinVec;
-        PV(k).dt_h = rb.timeStepMin / 60;
-        PV(k).date = datetime(dates(k,1), dates(k,2), dates(k,3));
-
-        if isfield(rb, 'timeDay')
-            PV(k).timeDay = rb.timeDay;
-        else
-            PV(k).timeDay = sprintf('%04d.%02d.%02d', dates(k,1), dates(k,2), dates(k,3));
-        end
+        
+        % --- KIMENETI MEZŐK KITÖLTÉSE PONTOSAN A KÉRT FORMÁBAN ---
+        PV(k).Ppv        = Ppv_total;           % sorvektor [kW]
+        PV(k).timeMinVec = timeMinVec;          % sorvektor
+        PV(k).dt_h       = rb.timeStepMin / 60; % skalár
+        PV(k).timeDay    = rb.timeDay;          
     end
-
+    
+    % Mentés a RAM-ba
     PV_MAP(cacheKey) = PV;
-
-    fprintf('PV reference cache ready: %d days, %.3f kWp reference.\n', ...
-        numel(PV), sum(Pdc_kWp));
-end
-
-
-function dateParts = local_parse_date_from_filename(fileName)
-
-    tok = regexp(fileName, '(\d{4})[._-](\d{2})[._-](\d{2})', 'tokens', 'once');
-
-    if isempty(tok)
-        dateParts = [NaN NaN NaN];
-    else
-        dateParts = str2double(tok);
-    end
-end
-
-
-function dateParts = local_parse_date_from_string(str)
-
-    tok = regexp(char(str), '(\d{4})[._-](\d{2})[._-](\d{2})', 'tokens', 'once');
-
-    if isempty(tok)
-        dateParts = [NaN NaN NaN];
-    else
-        dateParts = str2double(tok);
-    end
 end
