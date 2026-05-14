@@ -16,6 +16,25 @@ function industrialCtx = prepare_industrial_simulation_context(data, cfg)
 
     fprintf('\n=== INDUSTRIAL SIMULATION CONTEXT PREPARATION ===\n');
 
+    requiredCfgFields = {'contractSearch', 'detail', 'system', 'dc', 'pvA', 'pvB', 'pv'};
+
+    for i = 1:numel(requiredCfgFields)
+        if ~isfield(cfg, requiredCfgFields{i})
+            error('Hiányzó cfg mező: cfg.%s', requiredCfgFields{i});
+        end
+    end
+
+    requiredDetailFields = { ...
+        'max_representative_plots', ...
+        'max_overrun_days', ...
+        'overrun_tolerance_kW'};
+
+    for i = 1:numel(requiredDetailFields)
+        if ~isfield(cfg.detail, requiredDetailFields{i})
+            error('Hiányzó cfg.detail mező: cfg.detail.%s', requiredDetailFields{i});
+        end
+    end
+
     % =====================================================================
     % 1) Day cache
     % =====================================================================

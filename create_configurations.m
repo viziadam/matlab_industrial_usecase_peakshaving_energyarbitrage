@@ -40,6 +40,10 @@ function cfg = create_configurations(basePath)
     end
 
     % =====================================================================
+    % Industrial dispatch settings
+    % =====================================================================
+    
+    % =====================================================================
     % 3) Simulation horizon
     % =====================================================================
     cfg.analysis.simYears = 4;
@@ -77,7 +81,7 @@ function cfg = create_configurations(basePath)
     % Itt már nem DCAC_ratio x BESS_PV_ratio az alap candidate tér,
     % mert PV és inverter fix. A candidate-ek a BESS méretpárok.
 
-    cfg.candidates.BESS_PV_ratio_vec = 0.5:0.5:6;
+    cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
     cfg.candidates.bessDuration_h = 2;
 
     cfg.candidates.designFields = { ...
@@ -96,6 +100,9 @@ function cfg = create_configurations(basePath)
     cfg.contractSearch.fine_step_kW = 10;
     cfg.contractSearch.validation_offsets_kW = [-20 -10 0 10 20];
 
+    cfg.contractSearch.min_kW = 400;
+    cfg.contractSearch.max_kW = 1200;
+
     cfg.contractSearch.proxy.n_typical = 5;
     cfg.contractSearch.proxy.n_extreme = 2;
 
@@ -111,7 +118,8 @@ function cfg = create_configurations(basePath)
     % Ha nincs kemény hálózati limit, maradjon inf.
     % Ha van pl. transzformátor vagy csatlakozási korlát:
     % cfg.dispatch.P_grid_hard_cap_kW = 700;
-    cfg.dispatch.P_grid_hard_cap_kW = inf;
+    cfg.dispatch.P_grid_hard_cap_kW = 700;
+    cfg.dispatch.P_contract_safety_factor = 0.90;
 
     % =====================================================================
     % 8) Cost parameters
@@ -151,22 +159,40 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     cfg.diagnostics = struct();
 
-    cfg.diagnostics.testMode = false;
-    cfg.diagnostics.candidateIndex = 1;
+    cfg.diagnostics.enabled = true;
+    cfg.diagnostics.testMode = cfg.diagnostics.enabled;
 
-    % Candidate loop közben alapból ne mentsünk minden részletes napot,
-    % mert nagyon sok memória lehet.
+    cfg.diagnostics.candidateIndex = 2;
+
     cfg.diagnostics.storeCandidateDetail = false;
+    cfg.diagnostics.storePlannerDebug = true;
+    cfg.diagnostics.makePlots = true;
+    cfg.diagnostics.saveFigures = true;
+    cfg.diagnostics.closeFiguresAfterSave = false;
+    cfg.diagnostics.printPlannerDebug = true;
+    cfg.diagnostics.maxPrintedDebugDays = 15;
 
-    cfg.detail.max_representative_plots = 8;
-    cfg.detail.max_overrun_days = 8;
-    cfg.detail.overrun_tolerance_kW = 1e-6;
-
+    cfg.diagnostics.runEvaluation = true;
     cfg.diagnostics.outputFolder = fullfile(cfg.paths.results, 'diagnostics');
 
     if ~exist(cfg.diagnostics.outputFolder, 'dir')
         mkdir(cfg.diagnostics.outputFolder);
     end
+
+    % =====================================================================
+    % Detail / selected day plotting configuration
+    % =====================================================================
+    % Ez nem a diagnosztikai mód kapcsolója, hanem a full horizon futás
+    % részletes napmentésének konfigurációja.
+    %
+    % A prepare_industrial_simulation_context ebből készíti:
+    %   industrialCtx.detail_cfg
+
+    cfg.detail = struct();
+
+    cfg.detail.max_representative_plots = 8;
+    cfg.detail.max_overrun_days = 8;
+    cfg.detail.overrun_tolerance_kW = 1e-6;
 
     % =====================================================================
     % 11) Evaluation

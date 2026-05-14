@@ -94,6 +94,8 @@ function diagnostics = run_simulation_diagnostics(cfg)
     plot_final_day_detail_4y(full_result, simSummary.pars);
     plot_selected_day_details_4y(full_result, simSummary.pars);
 
+    plot_planner_execution_debug(full_result);
+
     % =====================================================================
     % 7) Kimenet
     % =====================================================================
@@ -534,4 +536,48 @@ function plot_selected_day_details_4y(full_result, pars)
     else
         fprintf('Nem volt eltárolt reprezentáns részletes nap.\n');
     end
+end
+
+function plot_planner_execution_debug(full_result)
+
+    if ~isfield(full_result, 'planner_debug') || isempty(full_result.planner_debug)
+        error('Nincs full_result.planner_debug mező.');
+    end
+
+    D = full_result.planner_debug;
+
+    day = [D.day_index];
+
+    figure('Name', 'Planner execution debug', 'Position', [120, 80, 1350, 900]);
+
+    subplot(4,1,1); hold on; grid on;
+    plot(day, [D.max_P_ch_plan], 'b-', 'LineWidth', 1.2, 'DisplayName', 'max P ch plan');
+    plot(day, [D.max_P_dis_plan], 'r-', 'LineWidth', 1.2, 'DisplayName', 'max P dis plan');
+    plot(day, [D.max_P_bess_req], 'k--', 'LineWidth', 1.2, 'DisplayName', 'max P bess req');
+    ylabel('kW');
+    title('Planner parancs vs. realtime BESS kérés');
+    legend('Location', 'best');
+
+    subplot(4,1,2); hold on; grid on;
+    plot(day, [D.max_P_grid_plan], 'b-', 'LineWidth', 1.2, 'DisplayName', 'max grid plan');
+    plot(day, [D.max_P_grid_actual], 'r--', 'LineWidth', 1.2, 'DisplayName', 'max grid actual');
+    plot(day, [D.contract_kW], 'k:', 'LineWidth', 1.2, 'DisplayName', 'contract');
+    ylabel('kW');
+    title('Tervezett és tényleges grid peak');
+    legend('Location', 'best');
+
+    subplot(4,1,3); hold on; grid on;
+    plot(day, [D.soc_plan_start], 'b-', 'LineWidth', 1.2, 'DisplayName', 'SoC plan start');
+    plot(day, [D.soc_plan_end], 'r-', 'LineWidth', 1.2, 'DisplayName', 'SoC plan end');
+    plot(day, [D.SoC_initial], 'k--', 'LineWidth', 1.2, 'DisplayName', 'actual SoC initial');
+    ylabel('SoC');
+    title('SoC terv és tényleges induló SoC');
+    legend('Location', 'best');
+
+    subplot(4,1,4); hold on; grid on;
+    plot(day, [D.exitflag], 'ko-', 'LineWidth', 1.2, 'DisplayName', 'exitflag');
+    ylabel('exitflag');
+    xlabel('day index');
+    title('MILP exitflag');
+    legend('Location', 'best');
 end

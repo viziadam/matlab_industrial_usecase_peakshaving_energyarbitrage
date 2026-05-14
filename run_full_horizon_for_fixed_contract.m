@@ -29,8 +29,8 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
         error('Hiányzó cfg mező: cfg.system.bessCoupling');
     end
 
-    if ~isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
-        error('Hiányzó cfg mező: cfg.dispatch.P_grid_hard_cap_kW');
+    if ~isfield(cfg.dispatch, 'P_contract_safety_factor')
+        error('Hiányzó cfg mező: cfg.dispatch.P_contract_safety_factor');
     end
 
     if ~isfield(detail_cfg, 'day_indices')
@@ -105,7 +105,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     end
 
     pars.E_cap_nom = pack_info.E_installed_kWh;
-    pars.P_grid_hard_cap_kW = cfg.dispatch.P_grid_hard_cap_kW;
+    pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
 
     % =====================================================================
     % 2) Havi contract állapot
@@ -141,6 +141,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     daily_overrun_cost = zeros(1, nDays);
 
     % Diagnosztikai napi költség- és energia tömbök
+    daily_contract_cost = zeros(1, nDays);
     daily_energy_cost = zeros(1, nDays);
     daily_deg_cost = zeros(1, nDays);
     daily_total_cost = zeros(1, nDays);
@@ -160,6 +161,33 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     % 6) Teljes horizon ciklus
     % =====================================================================
     final_day_detail = [];
+
+    planner_debug = struct( ...
+    'day_index', {}, ...
+    'abs_day', {}, ...
+    'contract_kW', {}, ...
+    'P_month_max_so_far_kW', {}, ...
+    'current_day_of_month', {}, ...
+    'P_grid_hard_cap_kW', {}, ...
+    'SoC_initial', {}, ...
+    'E_cap_nom', {}, ...
+    'P_rated', {}, ...
+    'P_inv_limit_ac', {}, ...
+    'dt_h', {}, ...
+    'max_load_48h', {}, ...
+    'max_pv_48h', {}, ...
+    'mean_price_48h', {}, ...
+    'exitflag', {}, ...
+    'objective_value', {}, ...
+    'max_P_ch_plan', {}, ...
+    'max_P_dis_plan', {}, ...
+    'max_P_grid_plan', {}, ...
+    'soc_plan_start', {}, ...
+    'soc_plan_end', {}, ...
+    'max_P_bess_req', {}, ...
+    'max_P_grid_actual', {}, ...
+    'bess_stored_kWh', {}, ...
+    'bess_discharged_kWh', {});
 
     for kk = 1:nDays
 
@@ -208,7 +236,14 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
         contract_state.P_contract_kW = contract_kW;
         contract_state.P_month_max_so_far_kW = current_month_peak;
         contract_state.current_day_of_month = mod(dc.abs_day - 1, 30) + 1;
-        contract_state.P_grid_hard_cap_kW = pars.P_grid_hard_cap_kW;
+
+        if ~isfield(pars, 'P_contract_safety_factor')
+            error('Hiányzó pars.P_contract_safety_factor a full horizon futásban.');
+        end
+
+        % Full horizon alatt a már kiválasztott optimális contract a referencia.
+        contract_state.P_grid_hard_cap_kW = contract_kW;
+        contract_state.P_contract_safety_factor = pars.P_contract_safety_factor;
 
         pars.SoC_initial = state_bess.cell_state.SOC;
 
@@ -228,6 +263,15 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
                     dc.dt_h, ...
                     contract_state, ...
                     15);
+                % -----------------------------------------------------------------
+                % Eredeti planner-kompatibilis solver/fallback ellenőrzés
+                % -----------------------------------------------------------------
+                % Az eredeti ems_day_ahead_planner_milp_contract nem ad vissza
+                % is_feasible / used_fallback mezőket.
+                % Helyette az exitflag és objective_value alapján ellenőrizzük,
+                % hogy valódi MILP-megoldás született-e.
+
+                
 
                 nDay = length(dc.P_load_actual);
 
@@ -271,6 +315,82 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
                     pars, ...
                     state_bess, ...
                     dc.dt_h);
+                dbg = struct();
+
+                dbg.day_index = kk;
+                dbg.abs_day = dc.abs_day;
+
+                dbg.contract_kW = contract_kW;
+                dbg.P_month_max_so_far_kW = contract_state.P_month_max_so_far_kW;
+                dbg.current_day_of_month = contract_state.current_day_of_month;
+
+                if isfield(contract_state, 'P_grid_hard_cap_kW')
+                    dbg.P_grid_hard_cap_kW = contract_state.P_grid_hard_cap_kW;
+                else
+                    dbg.P_grid_hard_cap_kW = NaN;
+                end
+
+                dbg.SoC_initial = pars.SoC_initial;
+                dbg.E_cap_nom = pars.E_cap_nom;
+                dbg.P_rated = pars.P_rated;
+                dbg.P_inv_limit_ac = pars.P_inv_limit_ac;
+                dbg.dt_h = dc.dt_h;
+
+                dbg.max_load_48h = max(dc.P_load_48h(:));
+                dbg.max_pv_48h = max(dc.P_pv_48h(:));
+                dbg.mean_price_48h = mean(dc.Prices_48h.buy_huf(:));
+
+                if isfield(plan_full, 'exitflag')
+                    dbg.exitflag = plan_full.exitflag;
+                else
+                    dbg.exitflag = NaN;
+                end
+
+                if isfield(plan_full, 'objective_value')
+                    dbg.objective_value = plan_full.objective_value;
+                else
+                    dbg.objective_value = NaN;
+                end
+
+                dbg.max_P_ch_plan = max(abs(plan_today.P_ch_plan(:)));
+                dbg.max_P_dis_plan = max(abs(plan_today.P_dis_plan(:)));
+                dbg.max_P_grid_plan = max(plan_today.P_grid_plan(:));
+
+                if ~isempty(plan_today.SoC_plan)
+                    dbg.soc_plan_start = plan_today.SoC_plan(1);
+                    dbg.soc_plan_end = plan_today.SoC_plan(end);
+                else
+                    dbg.soc_plan_start = NaN;
+                    dbg.soc_plan_end = NaN;
+                end
+
+                dbg.max_P_bess_req = max(abs(P_bess_dc_req_kW(:)));
+                dbg.max_P_grid_actual = max(dayRes.E_grid_import(:) / dc.dt_h);
+
+                dbg.bess_stored_kWh = sum(dayRes.E_stored(:));
+                dbg.bess_discharged_kWh = sum(dayRes.E_discharged(:));
+
+                planner_debug(end+1) = dbg; %#ok<AGROW>
+
+                if kk <= 10 || dbg.max_P_dis_plan > 1e-6 || dbg.max_P_ch_plan > 1e-6
+                    fprintf(['DBG day=%d abs=%d | contract=%.1f | Pgridcap=%.1f | SoC0=%.3f | ', ...
+                        'exit=%g | obj=%.3e | maxCh=%.2f | maxDis=%.2f | ', ...
+                        'maxReq=%.2f | maxGridPlan=%.2f | maxGridAct=%.2f | Est=%.2f | Edis=%.2f\n'], ...
+                    dbg.day_index, ...
+                    dbg.abs_day, ...
+                    dbg.contract_kW, ...
+                    dbg.P_grid_hard_cap_kW, ...
+                    dbg.SoC_initial, ...
+                    dbg.exitflag, ...
+                    dbg.objective_value, ...
+                    dbg.max_P_ch_plan, ...
+                    dbg.max_P_dis_plan, ...
+                    dbg.max_P_bess_req, ...
+                    dbg.max_P_grid_plan, ...
+                    dbg.max_P_grid_actual, ...
+                    dbg.bess_stored_kWh, ...
+                    dbg.bess_discharged_kWh);
+                end
                 
             case "ac"
 
@@ -384,6 +504,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
         daily_energy_cost(kk) = sum(C_energy_step_HUF(:));
         daily_deg_cost(kk) = sum(C_degradation_step_HUF(:));
+        daily_contract_cost(kk) = sum(C_contract_step_HUF(:));
 
         % Itt a napi total tartalmazza a napi contract költséget is,
         % mert a jelenlegi objectiveCost_HUF is így épül fel.
@@ -472,6 +593,8 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
     result.days_axis = [day_cache.abs_day];
 
+    result.planner_debug = planner_debug;
+
     result.daily_peak_with_bess = daily_peak_with_bess;
     result.daily_peak_no_bess = daily_peak_no_bess;
     result.daily_planned_peak = daily_planned_peak;
@@ -482,6 +605,8 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     result.daily_total_cost = daily_total_cost;
     result.daily_bess_throughput = daily_bess_throughput;
     result.daily_ref_contract = daily_ref_contract;
+
+    result.daily_contract_cost = daily_contract_cost;
 
     result.finalSoC = finalSoC;
     result.finalSoH = finalSoH;
@@ -513,4 +638,48 @@ end
 % =========================================================================
 function month_id = local_get_month_id_from_abs_day_4y(abs_day)
     month_id = floor((abs_day - 1) / 30) + 1;
+end
+
+function plot_planner_execution_debug(full_result)
+
+    if ~isfield(full_result, 'planner_debug') || isempty(full_result.planner_debug)
+        error('Nincs full_result.planner_debug mező.');
+    end
+
+    D = full_result.planner_debug;
+
+    day = [D.day_index];
+
+    figure('Name', 'Planner execution debug', 'Position', [120, 80, 1350, 900]);
+
+    subplot(4,1,1); hold on; grid on;
+    plot(day, [D.max_P_ch_plan], 'b-', 'LineWidth', 1.2, 'DisplayName', 'max P ch plan');
+    plot(day, [D.max_P_dis_plan], 'r-', 'LineWidth', 1.2, 'DisplayName', 'max P dis plan');
+    plot(day, [D.max_P_bess_req], 'k--', 'LineWidth', 1.2, 'DisplayName', 'max P bess req');
+    ylabel('kW');
+    title('Planner parancs vs. realtime BESS kérés');
+    legend('Location', 'best');
+
+    subplot(4,1,2); hold on; grid on;
+    plot(day, [D.max_P_grid_plan], 'b-', 'LineWidth', 1.2, 'DisplayName', 'max grid plan');
+    plot(day, [D.max_P_grid_actual], 'r--', 'LineWidth', 1.2, 'DisplayName', 'max grid actual');
+    plot(day, [D.contract_kW], 'k:', 'LineWidth', 1.2, 'DisplayName', 'contract');
+    ylabel('kW');
+    title('Tervezett és tényleges grid peak');
+    legend('Location', 'best');
+
+    subplot(4,1,3); hold on; grid on;
+    plot(day, [D.soc_plan_start], 'b-', 'LineWidth', 1.2, 'DisplayName', 'SoC plan start');
+    plot(day, [D.soc_plan_end], 'r-', 'LineWidth', 1.2, 'DisplayName', 'SoC plan end');
+    plot(day, [D.SoC_initial], 'k--', 'LineWidth', 1.2, 'DisplayName', 'actual SoC initial');
+    ylabel('SoC');
+    title('SoC terv és tényleges induló SoC');
+    legend('Location', 'best');
+
+    subplot(4,1,4); hold on; grid on;
+    plot(day, [D.exitflag], 'ko-', 'LineWidth', 1.2, 'DisplayName', 'exitflag');
+    ylabel('exitflag');
+    xlabel('day index');
+    title('MILP exitflag');
+    legend('Location', 'best');
 end

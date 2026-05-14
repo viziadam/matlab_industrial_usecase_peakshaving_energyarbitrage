@@ -17,29 +17,56 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
     nCandidates = DB.nCandidates;
 
     % =====================================================================
-    % Diagnostic mode
-    % =====================================================================
-    diagnosticMode = isfield(cfg, 'diagnostics') && ...
-                     isfield(cfg.diagnostics, 'testMode') && ...
-                     cfg.diagnostics.testMode;
+% Diagnostic mode
+% =====================================================================
+    diagnosticMode = false;
+
+    if isfield(cfg, 'diagnostics')
+        if isfield(cfg.diagnostics, 'enabled') && cfg.diagnostics.enabled
+            diagnosticMode = true;
+        elseif isfield(cfg.diagnostics, 'testMode') && cfg.diagnostics.testMode
+            diagnosticMode = true;
+        end
+    end
 
     if diagnosticMode
 
         if ~isfield(cfg.diagnostics, 'candidateIndex') || ...
-           isempty(cfg.diagnostics.candidateIndex)
+        isempty(cfg.diagnostics.candidateIndex)
 
-            error('cfg.diagnostics.testMode = true, de cfg.diagnostics.candidateIndex nincs megadva.');
+            error('cfg.diagnostics.enabled = true, de cfg.diagnostics.candidateIndex nincs megadva.');
         end
 
-        candidateList = cfg.diagnostics.candidateIndex(:).';
+        requestedCandidateList = cfg.diagnostics.candidateIndex(:).';
 
-        if any(candidateList < 1) || any(candidateList > nCandidates)
+        if any(requestedCandidateList < 1) || any(requestedCandidateList > nCandidates)
             error('Érvénytelen diagnostics candidateIndex.');
         end
 
-        fprintf('\nDIAGNOSTIC TEST MODE ACTIVE\n');
-        fprintf('Only selected candidate(s) will be simulated.\n');
+        T = DB.candidateTable;
+
+        if ~ismember('BESS_PV_ratio', T.Properties.VariableNames)
+            error('A candidateTable nem tartalmaz BESS_PV_ratio oszlopot.');
+        end
+
+        baselineIdx = find(abs(T.BESS_PV_ratio) < 1e-12);
+
+        if isempty(baselineIdx)
+            error('Diagnosztikai/evaluation futáshoz kell baseline candidate: BESS_PV_ratio = 0.');
+        end
+
+        if numel(baselineIdx) > 1
+            error('Több baseline candidate található. Ez nem egyértelmű.');
+        end
+
+        candidateList = unique([baselineIdx, requestedCandidateList], 'stable');
+
+        fprintf('\n====================================================\n');
+        fprintf('DIAGNOSTIC MODE ACTIVE\n');
+        fprintf('Baseline + selected candidate(s) will be simulated.\n');
+        fprintf('Candidate list: ');
         disp(candidateList);
+        fprintf('====================================================\n');
 
     else
         candidateList = 1:nCandidates;
@@ -69,10 +96,16 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             % -------------------------------------------------------------
             % Horizon-level candidate simulation
             % -------------------------------------------------------------
+            cfgRun = cfg;
+
+            if diagnosticMode
+                cfgRun.diagnostics.storeCandidateDetail = true;
+                cfgRun.diagnostics.storePlannerDebug = true;
+            end
             [running, simSummary, detail] = simulate_industrial_candidate_horizon( ...
                 industrialCtx, ...
                 design, ...
-                cfg);
+                cfgRun);
 
             runtime_s = toc(tCandidate);
 
@@ -97,7 +130,7 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 c, ...
                 running, ...
                 runtime_s, ...
-                cfg);
+                cfgRun);
 
             % -------------------------------------------------------------
             % Detailed diagnostics
@@ -138,6 +171,8 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             rethrow(ME);
         end
 
+        
+
         % -----------------------------------------------------------------
         % Partial save
         % -----------------------------------------------------------------
@@ -148,6 +183,77 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             save_candidates_database(DB, cfg);
         end
     end
+
+    if diagnosticMode && isfield(cfg.diagnostics, 'runEvaluation') && cfg.diagnostics.runEvaluation
+
+            evalCfgDiag = create_evaluation_config(cfg);
+
+            evalCfgDiag.output.baseFolder = fullfile( ...
+                cfg.diagnostics.outputFolder, ...
+                'evaluation');
+
+            if ~exist(evalCfgDiag.output.baseFolder, 'dir')
+                mkdir(evalCfgDiag.output.baseFolder);
+            end
+
+            evalCfgDiag.output.saveEvaluationMat = true;
+            evalCfgDiag.output.saveEvaluationCsv = true;
+            evalCfgDiag.output.saveReportTables = true;
+
+            evalCfgDiag.plots.makePlots = true;
+
+            % Diagnosztikai módban nem kérünk teljes sweep-görbéket,
+            % mert csak baseline + selected candidate van.
+            evalCfgDiag.plots.makeCandidateSweepPlots = false;
+
+            % Helyette részletes éves költségvetést rajzolunk a kiválasztott candidate-re.
+            evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
+
+            evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
+
+            save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
+                'evaluationResult', ...
+                '-v7.3');
+
+            fprintf('\nDiagnostic evaluation saved:\n%s\n', ...
+                fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
+
+            % -----------------------------------------------------------------
+            % Részletes éves költségvetés a kiválasztott diagnosztikai candidate-re
+            % -----------------------------------------------------------------
+            diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
+
+            for ii = 1:numel(diagnosticCandidateList)
+
+                selectedCandidateIndex = diagnosticCandidateList(ii);
+
+                if selectedCandidateIndex == baselineIdx
+                    continue;
+                end
+
+                yearlyResult = evaluate_selected_candidate_yearly_budget( ...
+                    DB, ...
+                    cfg, ...
+                    evalCfgDiag, ...
+                    selectedCandidateIndex);
+
+                yearlyOutDir = fullfile( ...
+                    cfg.diagnostics.outputFolder, ...
+                    sprintf('candidate_%06d', selectedCandidateIndex), ...
+                    'yearly_budget');
+
+                if ~exist(yearlyOutDir, 'dir')
+                    mkdir(yearlyOutDir);
+                end
+
+                yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
+                writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
+
+                save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), ...
+                    'yearlyResult', ...
+                    '-v7.3');
+            end
+     end
 end
 
 

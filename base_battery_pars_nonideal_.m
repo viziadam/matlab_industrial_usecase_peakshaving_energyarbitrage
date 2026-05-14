@@ -9,8 +9,8 @@ function pars = base_battery_pars_nonideal_(E_cap_nom, Pmax)
     pars.P_chg_max        = Pmax;
     pars.P_dis_max        = Pmax;
 
-    pars.SoC_min          = 0.20;
-    pars.SoC_max          = 0.80;
+    pars.SoC_min          = 0.15;
+    pars.SoC_max          = 0.90;
     pars.SoC_init         = 0.50;
 
     pars.eta_c            = 0.975;

@@ -55,6 +55,21 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
 
     running = init_metrics(nT, cfg);
 
+    isNoBessCandidate = ...
+        design.E_BESS_kWh <= 0 || ...
+        design.P_BESS_kW <= 0 || ...
+        design.BESS_PV_ratio <= 0;
+
+    if isNoBessCandidate
+
+        [running, simSummary, detail] = simulate_industrial_no_bess_candidate_horizon( ...
+            industrialCtx, ...
+            design, ...
+            cfg);
+
+        return;
+    end
+
     % =====================================================================
     % 1) BESS paraméterek
     % =====================================================================
@@ -74,7 +89,35 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
 
     pars.P_inv_limit_ac = design.P_inv_kW;
     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
-    pars.P_grid_hard_cap_kW = cfg.dispatch.P_grid_hard_cap_kW;
+    % if ~isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
+    %     error('Hiányzó cfg.dispatch.P_grid_hard_cap_kW.');
+    % end
+    % 
+    % pars.P_grid_hard_cap_kW = cfg.dispatch.P_grid_hard_cap_kW;
+
+    if ~isfield(cfg.dispatch, 'P_contract_safety_factor')
+        error('Hiányzó cfg.dispatch.P_contract_safety_factor.');
+    end
+
+    pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
+
+    fprintf('\n--- CANDIDATE PARAMETER DEBUG ---\n');
+    fprintf('design.E_BESS_kWh       = %.3f\n', design.E_BESS_kWh);
+    fprintf('design.P_BESS_kW        = %.3f\n', design.P_BESS_kW);
+    fprintf('design.P_inv_kW         = %.3f\n', design.P_inv_kW);
+    fprintf('pars.E_cap_nom          = %.3f\n', pars.E_cap_nom);
+    fprintf('pars.P_rated            = %.3f\n', pars.P_rated);
+    fprintf('pars.P_inv_limit_ac     = %.3f\n', pars.P_inv_limit_ac);
+    fprintf('pars.deg_cost_HUF/kWh   = %.3f\n', pars.degradation_cost_per_kWh);
+    fprintf('pars.SoC_min           = %.3f\n', pars.SoC_min);
+    fprintf('pars.SoC_max           = %.3f\n', pars.SoC_max);
+    fprintf('pars.SoC_init          = %.3f\n', pars.SoC_init);
+
+    if isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
+        fprintf('cfg.dispatch.P_grid_hard_cap_kW = %.3f\n', cfg.dispatch.P_grid_hard_cap_kW);
+    end
+
+    fprintf('---------------------------------\n');
 
     % =====================================================================
     % 2) Contract search

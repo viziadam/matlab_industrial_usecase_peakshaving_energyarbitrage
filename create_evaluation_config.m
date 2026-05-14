@@ -98,15 +98,14 @@ function evalCfg = create_evaluation_config(cfg)
     % ---------------------------------------------------------------------
     evalCfg.plots.makePlots = true;
 
-    % Alapból ne készítsen 3D scattert.
-    % Ha később kell, állítsd true-ra.
-    evalCfg.plots.make3DScatter = false;
-    evalCfg.plots.makeMetricCurves = true;
+    % Teljes candidate-sweep ábrák BESS/PV ratio mentén.
+    % Normál futásnál true, diagnosztikai módban false-ra állítjuk.
+    evalCfg.plots.makeCandidateSweepPlots = true;
 
-    % Ha make3DScatter = true, akkor:
-    % false -> csak a kompakt metrikákat rajzolja
-    % true  -> minden megadott metrikát rajzol
-    evalCfg.plots.showAllMetrics = false;
+    % Egy kiválasztott candidate részletes, évenkénti költségvetése.
+    % Normál teljes sweep után később a top jelöltekre lehet használni.
+    % Diagnosztikai módban true.
+    evalCfg.plots.makeSelectedCandidateYearlyPlots = false;
 
     % ---------------------------------------------------------------------
     % 3) Legjobb rendszer kiválasztása

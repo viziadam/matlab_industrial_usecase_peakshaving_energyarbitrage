@@ -1475,35 +1475,6 @@ function plan = ems_day_ahead_planner_milp_contract(P_load_f, P_pv_dc_f, Prices,
     end
 
     % ---------------------------------------------------------------------
-    % SOLVER FAILURE - nincs fallback
-    % ---------------------------------------------------------------------
-    % if isempty(x) || exitflag <= 0
-    % 
-    %     fprintf('\n=== MILP PLANNER FAILURE ===\n');
-    %     fprintf('exitflag = %d\n', exitflag);
-    %     fprintf('P_contract = %.3f kW\n', P_contract);
-    %     fprintf('P_grid_hard_cap = %.3f kW\n', P_grid_hard_cap);
-    %     fprintf('SoC_start = %.4f\n', SoC_start);
-    %     fprintf('E_cap_nom = %.3f kWh\n', pars.E_cap_nom);
-    %     fprintf('P_ch_max = %.3f kW\n', P_ch_max);
-    %     fprintf('P_dis_max = %.3f kW\n', P_dis_max);
-    %     fprintf('dt_milp = %.6f h\n', dt_milp);
-    %     fprintf('N = %d\n', N);
-    %     fprintf('max(P_load_f) = %.3f kW\n', max(P_load_f));
-    %     fprintf('max(P_pv_ac) = %.3f kW\n', max(P_pv_ac));
-    %     fprintf('max(P_load_f - P_pv_ac) = %.3f kW\n', max(P_load_f - P_pv_ac));
-    %     fprintf('max(max(P_load_f - P_pv_ac, 0)) = %.3f kW\n', max(max(P_load_f - P_pv_ac, 0)));
-    %     fprintf('min(b) = %.3e, max(b) = %.3e\n', min(b), max(b));
-    %     fprintf('min(beq) = %.3e, max(beq) = %.3e\n', min(beq), max(beq));
-    %     fprintf('min(f) = %.3e, max(f) = %.3e\n', min(f), max(f));
-    %     fprintf('============================\n');
-    % 
-    %     error(['MILP planner failed. No fallback plan is allowed. ', ...
-    %        'exitflag = %d, P_contract = %.3f kW, P_grid_hard_cap = %.3f kW'], ...
-    %        exitflag, P_contract, P_grid_hard_cap);
-    % end
-
-    % ---------------------------------------------------------------------
     % MEGOLDAS KIBONTASA
     % ---------------------------------------------------------------------
     P_gload  = x(iGload);
