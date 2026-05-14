@@ -1,0 +1,2432 @@
+% function test_single_bess_contract_search()
+% % TEST_SINGLE_BESS_CONTRACT_SEARCH
+% % Egyetlen BESS méretre:
+% % - peak-oriented, rule-assisted rolling MILP vezérlés
+% % - contract sweep (durva + finom keresés)
+% % - futásidő és optimum kiértékelés
+% %
+% % Külső függőségek, amelyeknek létezniük kell:
+% %   build_pv_cache
+% %   build_load_price_cache
+% %   bess_pack_model
+% %   topology_dc_coupled
+% 
+%     clc; close all;
+%     fprintf('=== PEAK-ORIENTED BESS + CONTRACT SWEEP TESZT ===\n');
+% 
+%     % ---------------------------------------------------------------------
+%     % 1) ADATOK
+%     % ---------------------------------------------------------------------
+%     fprintf('Adatok betöltése...\n');
+%     PV_A = build_pv_cache(11, [95, 275], [274, 274], 0.325);
+%     PV_B = build_pv_cache(11, [70, 250], [100.5, 100.5], 0.325);
+%     [Load, Price] = build_load_price_cache();
+% 
+%     FINAL_DAY = 260;
+%     START_DAY = FINAL_DAY - 129;   % 130 napos teszt
+%     nSimDays = FINAL_DAY - START_DAY + 1;
+% 
+%     % ---------------------------------------------------------------------
+%     % 2) BESS PARAMETEREK (1 db BESS méret)
+%     % ---------------------------------------------------------------------
+%     E_bess_cap = 1500; % [kWh]
+%     P_bess_max = 750;  % [kW]
+% 
+%     pars = base_battery_pars_nonideal_(E_bess_cap, P_bess_max);
+%     pars.P_inv_limit_ac = 550;
+%     pars.degradation_cost_per_kWh = 5.0;
+% 
+%     fprintf('BESS paraméterek: E=%.1f kWh, P=%.1f kW\n', E_bess_cap, P_bess_max);
+% 
+%     % ---------------------------------------------------------------------
+%     % 3) CONTRACT KERESÉS - DURVA + FINOM RÁCS
+%     % ---------------------------------------------------------------------
+%     coarse_candidates = 250:50:650;
+% 
+%     fprintf('\n--- DURVA CONTRACT KERESÉS ---\n');
+%     t_coarse = tic;
+%     coarse_results = local_run_contract_sweep( ...
+%         coarse_candidates, START_DAY, FINAL_DAY, ...
+%         PV_A, PV_B, Load, Price, pars, false);
+%     coarse_runtime = toc(t_coarse);
+% 
+%     [~, idx_best_coarse] = min([coarse_results.total_cost_period_huf]);
+%     best_coarse_contract = coarse_results(idx_best_coarse).contract_kW;
+% 
+%     fprintf('Durva optimum: %.1f kW\n', best_coarse_contract);
+% 
+%     fine_candidates = unique(max(25, best_coarse_contract-50):10:(best_coarse_contract+50));
+% 
+%     fprintf('\n--- FINOM CONTRACT KERESÉS ---\n');
+%     t_fine = tic;
+%     fine_results = local_run_contract_sweep( ...
+%         fine_candidates, START_DAY, FINAL_DAY, ...
+%         PV_A, PV_B, Load, Price, pars, false);
+%     fine_runtime = toc(t_fine);
+% 
+%     [~, idx_best_fine] = min([fine_results.total_cost_period_huf]);
+%     best_contract = fine_results(idx_best_fine).contract_kW;
+% 
+%     fprintf('Finom optimum: %.1f kW\n', best_contract);
+% 
+%     % ---------------------------------------------------------------------
+%     % 4) RÉSZLETES FUTÁS A LEGJOBB CONTRACTRA
+%     % ---------------------------------------------------------------------
+%     fprintf('\n--- RESZLETES FUTAS A LEGJOBB CONTRACTRA (%.1f kW) ---\n', best_contract);
+%     t_best = tic;
+%     best_detail = local_run_single_contract( ...
+%         best_contract, START_DAY, FINAL_DAY, ...
+%         PV_A, PV_B, Load, Price, pars, true);
+%     best_runtime = toc(t_best);
+% 
+%     total_runtime = coarse_runtime + fine_runtime + best_runtime;
+% 
+%     % ---------------------------------------------------------------------
+%     % 5) LOGOK
+%     % ---------------------------------------------------------------------
+%     fprintf('\n================ ÖSSZEFOGLALÓ ================\n');
+%     fprintf('Tesztelt BESS méret:                  E=%.1f kWh, P=%.1f kW\n', E_bess_cap, P_bess_max);
+%     fprintf('Szimulált napok száma:                %d nap\n', nSimDays);
+%     fprintf('Durva sweep futásidő:                 %.2f s\n', coarse_runtime);
+%     fprintf('Finom sweep futásidő:                 %.2f s\n', fine_runtime);
+%     fprintf('Legjobb contract részletes futás:     %.2f s\n', best_runtime);
+%     fprintf('Teljes script futásidő:               %.2f s\n', total_runtime);
+% 
+%     fprintf('\nOptimális lekötött teljesítmény:      %.1f kW\n', best_detail.contract_kW);
+%     fprintf('Időszakos contract költség:           %.2f HUF\n', best_detail.contract_cost_period_huf);
+%     fprintf('Időszakos energia költség:            %.2f HUF\n', best_detail.energy_cost_period_huf);
+%     fprintf('Időszakos degradációs költség:        %.2f HUF\n', best_detail.degradation_cost_period_huf);
+%     fprintf('Időszakos overrun proxy költség:      %.2f HUF\n', best_detail.overrun_cost_period_huf);
+%     fprintf('Időszakos peak shadow költség:        %.2f HUF\n', best_detail.peak_shadow_cost_period_huf);
+%     fprintf('Időszakos teljes költség:             %.2f HUF\n', best_detail.total_cost_period_huf);
+% 
+%     fprintf('\nPeak statisztikák:\n');
+%     fprintf('No-BESS max peak:                     %.2f kW\n', max(best_detail.daily_peak_no_bess));
+%     fprintf('BESS max peak:                        %.2f kW\n', max(best_detail.daily_peak_with_bess));
+%     fprintf('MILP átlagos tervezett peak:          %.2f kW\n', mean(best_detail.daily_planned_peak));
+%     fprintf('Átlagos napi BESS throughput:         %.2f kWh/nap\n', mean(best_detail.daily_bess_throughput));
+%     fprintf('Túllépéses napok száma:               %d / %d\n', ...
+%         sum(best_detail.daily_peak_with_bess > best_detail.daily_ref_contract + 1e-6), nSimDays);
+% 
+%     % ---------------------------------------------------------------------
+%     % 6) PLOTOK
+%     % ---------------------------------------------------------------------
+%     local_plot_contract_sweep(coarse_results, fine_results, best_detail);
+%     local_plot_best_day(best_detail);
+%     local_plot_best_period(best_detail);
+% 
+%     fprintf('\n=== KÉSZ ===\n');
+% end
+% 
+% % =========================================================================
+% % CONTRACT SWEEP
+% % =========================================================================
+% function results = local_run_contract_sweep(contract_candidates, START_DAY, FINAL_DAY, ...
+%     PV_A, PV_B, Load, Price, pars, store_detail)
+% 
+%     nC = numel(contract_candidates);
+%     results = [];
+% 
+%     for i = 1:nC
+%         contract_kW = contract_candidates(i);
+%         fprintf('Contract sweep: %.1f kW ...\n', contract_kW);
+% 
+%         t_one = tic;
+%         res_i = local_run_single_contract( ...
+%             contract_kW, START_DAY, FINAL_DAY, ...
+%             PV_A, PV_B, Load, Price, pars, store_detail);
+%         res_i.runtime_s = toc(t_one);
+% 
+%         if i == 1
+%             results = repmat(res_i, 1, nC);
+%         end
+% 
+%         results(i) = res_i;
+% 
+%         fprintf('  total cost = %.2f HUF | runtime = %.2f s\n', ...
+%             res_i.total_cost_period_huf, res_i.runtime_s);
+%     end
+% end
+% 
+% % =========================================================================
+% % EGY CONTRACT RÉSZLETES / AGGREGÁLT FUTTATÁSA
+% % =========================================================================
+% function result = local_run_single_contract(contract_kW, START_DAY, FINAL_DAY, ...
+%     PV_A, PV_B, Load, Price, pars_in, store_detail)
+% 
+%     nSimDays = FINAL_DAY - START_DAY + 1;
+%     days_in_year = 365;
+% 
+%     pars = pars_in;
+% 
+%     % Akku inicializálása
+%     init_params = struct( ...
+%         'target_energy_kWh', pars.E_cap_nom, ...
+%         'max_power_W', pars.P_rated * 1000, ...
+%         'initial_soc', 0.5);
+% 
+%     [pack_info, state_bess] = bess_pack_model(0, 'init', init_params, 1/12, []);
+%     pars.E_cap_nom = pack_info.E_installed_kWh;
+% 
+%     P_12month_max = 0;
+%     current_month_peak = 0;
+% 
+%     % Napi gyűjtők
+%     daily_peak_no_bess    = zeros(1, nSimDays);
+%     daily_peak_with_bess  = zeros(1, nSimDays);
+%     daily_energy_cost     = zeros(1, nSimDays);
+%     daily_deg_cost        = zeros(1, nSimDays);
+%     daily_overrun_cost    = zeros(1, nSimDays);
+%     daily_peak_shadow     = zeros(1, nSimDays);
+%     daily_total_cost      = zeros(1, nSimDays);
+%     daily_bess_throughput = zeros(1, nSimDays);
+%     daily_planned_peak    = zeros(1, nSimDays);
+%     daily_ref_contract    = zeros(1, nSimDays);
+% 
+%     % Részletes végső napi tárolók
+%     plot_plan = [];
+%     plot_res = [];
+%     plot_load = [];
+%     plot_pv = [];
+%     plot_price = [];
+%     soc_start_of_final_day = NaN;
+% 
+%     for d = START_DAY:FINAL_DAY
+% 
+%         current_day_of_month = mod(d-1, 30) + 1;
+%         dt_h = PV_A(d).dt_h;
+% 
+%         % Tényleges napi profilok
+%         P_pv_dc_actual = (PV_A(d).Ppv + PV_B(d).Ppv) / 1000;
+%         P_load_actual  = Load(d).P_load_kW;
+%         Prices_today   = Price(d);
+% 
+%         % Tökéletes forecast a validációhoz
+%         P_load_f_today = Load(d).P_load_kW;
+%         P_pv_f_today   = (PV_A(d).Ppv + PV_B(d).Ppv) / 1000;
+% 
+%         P_load_f_tomorrow = Load(d+1).P_load_kW;
+%         P_pv_f_tomorrow   = (PV_A(d+1).Ppv + PV_B(d+1).Ppv) / 1000;
+%         Prices_tomorrow   = Price(d+1);
+% 
+%         P_load_48h = [P_load_f_today, P_load_f_tomorrow];
+%         P_pv_48h   = [P_pv_f_today,   P_pv_f_tomorrow];
+% 
+%         Prices_48h.buy_huf = [Prices_today.buy_huf, Prices_tomorrow.buy_huf];
+% 
+%         if d == FINAL_DAY
+%             soc_start_of_final_day = state_bess.cell_state.SOC;
+%         end
+% 
+%         tariff = create_hungarian_mv_tariff_structure_peak_oriented();
+%         tariff.contracted_capacity_kW = contract_kW;
+% 
+%         plan_full = ems_day_ahead_planner_milp_peak_oriented( ...
+%             P_load_48h, P_pv_48h, Prices_48h, pars, tariff, dt_h, ...
+%             current_day_of_month, P_12month_max);
+% 
+%         nDay = length(P_load_actual);
+% 
+%         plan_today = plan_full;
+%         plan_today.trade_buy_mask  = plan_full.trade_buy_mask(1:nDay);
+%         plan_today.trade_sell_mask = plan_full.trade_sell_mask(1:nDay);
+%         plan_today.P_ch_plan       = plan_full.P_ch_plan(1:nDay);
+%         plan_today.P_dis_plan      = plan_full.P_dis_plan(1:nDay);
+%         plan_today.P_grid_plan     = plan_full.P_grid_plan(1:nDay);
+%         plan_today.P_curt_plan     = plan_full.P_curt_plan(1:nDay);
+%         plan_today.SoC_plan        = plan_full.SoC_plan(1:nDay);
+% 
+%         % Realtime végrehajtás
+%         P_bess_dc_req_kW = ems_realtime_decision_dc( ...
+%             P_pv_dc_actual, P_load_actual, plan_today, pars);
+% 
+%         [dayRes, state_bess] = topology_dc_coupled( ...
+%             P_bess_dc_req_kW, P_pv_dc_actual, P_load_actual, ...
+%             Prices_today, pars, state_bess, dt_h);
+% 
+%         actual_daily_peak = max(dayRes.E_grid_import) / dt_h;
+%         current_month_peak = max(current_month_peak, actual_daily_peak);
+% 
+%         ii = d - START_DAY + 1;
+% 
+%         P_grid_no_bess_day   = max(P_load_actual - P_pv_dc_actual * pars.inv_eta, 0);
+%         P_grid_with_bess_day = dayRes.E_grid_import / dt_h;
+% 
+%         daily_peak_no_bess(ii)    = max(P_grid_no_bess_day);
+%         daily_peak_with_bess(ii)  = max(P_grid_with_bess_day);
+%         daily_energy_cost(ii)     = plan_today.economics.energy_cost_total;
+%         daily_deg_cost(ii)        = plan_today.economics.degradation_cost;
+%         daily_overrun_cost(ii)    = plan_today.economics.overrun_cost_proxy;
+%         daily_peak_shadow(ii)     = plan_today.economics.peak_shadow_cost;
+%         daily_total_cost(ii)      = plan_today.economics.energy_cost_total + ...
+%                                     plan_today.economics.degradation_cost + ...
+%                                     plan_today.economics.overrun_cost_proxy + ...
+%                                     plan_today.economics.peak_shadow_cost;
+%         daily_bess_throughput(ii) = sum(dayRes.E_stored + dayRes.E_discharged);
+%         daily_planned_peak(ii)    = plan_today.P_limit;
+%         daily_ref_contract(ii)    = plan_today.P_limit_ref;
+% 
+%         if store_detail && d == FINAL_DAY
+%             plot_plan  = plan_today;
+%             plot_res   = dayRes;
+%             plot_load  = P_load_actual;
+%             plot_pv    = P_pv_dc_actual;
+%             plot_price = Prices_today;
+%         end
+%     end
+% 
+%     % Időszakos fix contract költség
+%     period_days = nSimDays;
+%     tariff = create_hungarian_mv_tariff_structure_peak_oriented();
+%     contract_cost_period = (period_days / days_in_year) * ...
+%         (tariff.annual_contracted_power_fee_huf_per_kW * contract_kW + tariff.annual_base_fee_huf);
+% 
+%     result = struct();
+%     result.contract_kW = contract_kW;
+% 
+%     result.energy_cost_period_huf       = sum(daily_energy_cost);
+%     result.degradation_cost_period_huf  = sum(daily_deg_cost);
+%     result.overrun_cost_period_huf      = sum(daily_overrun_cost);
+%     result.peak_shadow_cost_period_huf  = sum(daily_peak_shadow);
+%     result.contract_cost_period_huf     = contract_cost_period;
+% 
+%     result.total_cost_period_huf = result.energy_cost_period_huf + ...
+%                                    result.degradation_cost_period_huf + ...
+%                                    result.overrun_cost_period_huf + ...
+%                                    result.peak_shadow_cost_period_huf + ...
+%                                    result.contract_cost_period_huf;
+% 
+%     result.daily_peak_no_bess      = daily_peak_no_bess;
+%     result.daily_peak_with_bess    = daily_peak_with_bess;
+%     result.daily_energy_cost       = daily_energy_cost;
+%     result.daily_deg_cost          = daily_deg_cost;
+%     result.daily_overrun_cost      = daily_overrun_cost;
+%     result.daily_peak_shadow       = daily_peak_shadow;
+%     result.daily_total_cost        = daily_total_cost;
+%     result.daily_bess_throughput   = daily_bess_throughput;
+%     result.daily_planned_peak      = daily_planned_peak;
+%     result.daily_ref_contract      = daily_ref_contract;
+%     result.days_axis               = START_DAY:FINAL_DAY;
+% 
+%     result.final_day = struct();
+%     result.final_day.plan      = plot_plan;
+%     result.final_day.res       = plot_res;
+%     result.final_day.load      = plot_load;
+%     result.final_day.pv        = plot_pv;
+%     result.final_day.price     = plot_price;
+%     result.final_day.soc_start = soc_start_of_final_day;
+% end
+% 
+% % =========================================================================
+% % PLOTOK
+% % =========================================================================
+% function local_plot_contract_sweep(coarse_results, fine_results, best_detail)
+% 
+%     all_results = [coarse_results, fine_results];
+%     contracts_all = [all_results.contract_kW];
+% 
+%     % Rendezzük contract szerint
+%     [contracts_all, idx_sort] = sort(contracts_all);
+%     all_results = all_results(idx_sort);
+% 
+%     % Duplikált contractok kezelése:
+%     % ugyanarra a contract értékre csak az utolsó előfordulást tartjuk meg
+%     [contracts_unique, ia] = unique(contracts_all, 'last');
+%     all_results = all_results(ia);
+% 
+%     contracts = contracts_unique(:).';
+% 
+%     total_cost    = [all_results.total_cost_period_huf];
+%     contract_cost = [all_results.contract_cost_period_huf];
+%     energy_cost   = [all_results.energy_cost_period_huf];
+%     degr_cost     = [all_results.degradation_cost_period_huf];
+%     over_cost     = [all_results.overrun_cost_period_huf];
+%     runtime_s     = [all_results.runtime_s];
+%     max_peak      = arrayfun(@(s) max(s.daily_peak_with_bess), all_results);
+%     mean_peak     = arrayfun(@(s) mean(s.daily_peak_with_bess), all_results);
+% 
+%     figure('Name', 'Contract sweep eredmények', 'Position', [80, 80, 1350, 900]);
+% 
+%     subplot(2,2,1); hold on; grid on;
+%     plot(contracts, total_cost, 'k-o', 'LineWidth', 2, 'DisplayName', 'Teljes költség');
+%     xline(best_detail.contract_kW, 'r--', 'LineWidth', 1.5, ...
+%         'DisplayName', sprintf('Optimális contract = %.0f kW', best_detail.contract_kW));
+%     xlabel('Lekötött teljesítmény [kW]');
+%     ylabel('Költség [HUF]');
+%     title('Teljes költség a contract függvényében');
+%     legend('Location', 'best');
+% 
+%     subplot(2,2,2); hold on; grid on;
+%     plot(contracts, energy_cost,   'k-', 'LineWidth', 1.5, 'DisplayName', 'Energia');
+%     plot(contracts, degr_cost,     'b-', 'LineWidth', 1.5, 'DisplayName', 'Degradáció');
+%     plot(contracts, over_cost,     'r-', 'LineWidth', 1.5, 'DisplayName', 'Overrun');
+%     plot(contracts, contract_cost, 'm-', 'LineWidth', 1.5, 'DisplayName', 'Contract fix díj');
+%     xlabel('Lekötött teljesítmény [kW]');
+%     ylabel('Költség [HUF]');
+%     title('Költségkomponensek');
+%     legend('Location', 'best');
+% 
+%     subplot(2,2,3); hold on; grid on;
+%     plot(contracts, max_peak,  'b-o', 'LineWidth', 1.5, 'DisplayName', 'Max napi peak');
+%     plot(contracts, mean_peak, 'k-s', 'LineWidth', 1.5, 'DisplayName', 'Átlagos napi peak');
+%     xline(best_detail.contract_kW, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Optimális contract');
+%     xlabel('Lekötött teljesítmény [kW]');
+%     ylabel('Peak [kW]');
+%     title('Peak statisztikák');
+%     legend('Location', 'best');
+% 
+%     subplot(2,2,4); hold on; grid on;
+%     bar(contracts, runtime_s, 'FaceColor', [0.2 0.6 0.8]);
+%     xlabel('Lekötött teljesítmény [kW]');
+%     ylabel('Futásidő [s]');
+%     title('Sweep futásidő contract pontonként');
+% end
+% function local_plot_best_day(best_detail)
+% 
+%     if isempty(best_detail.final_day.plan)
+%         return;
+%     end
+% 
+%     plot_plan  = best_detail.final_day.plan;
+%     plot_res   = best_detail.final_day.res;
+%     plot_load  = best_detail.final_day.load;
+%     plot_pv    = best_detail.final_day.pv;
+%     plot_price = best_detail.final_day.price;
+%     soc_start_of_final_day = best_detail.final_day.soc_start;
+% 
+%     pars_local.inv_eta = 0.97; % csak a napi plothoz, ugyanaz mint a base pars-ban
+%     % Megjegyzés: ha akarod, ezt át lehet adni külön is.
+% 
+%     time_hours = linspace(0, 24, length(plot_load));
+% 
+%     figure('Name', sprintf('Legjobb contract napi részlet (%.0f kW)', best_detail.contract_kW), ...
+%            'Position', [100, 100, 1250, 950]);
+% 
+%     subplot(3,1,1); hold on; grid on;
+%     title(sprintf('Teljesítményáramlások és tervezett limit - contract = %.0f kW', best_detail.contract_kW), 'FontSize', 12);
+% 
+%     P_pv_ac = plot_pv * pars_local.inv_eta;
+%     P_pv_to_load = min(P_pv_ac, plot_load);
+%     residual_after_pv = max(plot_load - P_pv_to_load, 0);
+%     P_bess_to_load = min(plot_res.E_discharged / (time_hours(2)-time_hours(1)), residual_after_pv);
+%     P_grid_to_load = max(plot_load - P_pv_to_load - P_bess_to_load, 0);
+% 
+%     dt_plot = 24 / length(plot_load);
+%     P_bess_to_load = min(plot_res.E_discharged / dt_plot, residual_after_pv);
+%     P_grid_to_load = max(plot_load - P_pv_to_load - P_bess_to_load, 0);
+%     P_bess_charge = plot_res.E_stored / dt_plot;
+% 
+%     h = area(time_hours, [P_pv_to_load', P_bess_to_load', P_grid_to_load']);
+%     h(1).FaceColor = [0.4660 0.6740 0.1880]; h(1).DisplayName = 'PV -> fogyasztás';
+%     h(2).FaceColor = [0.0000 0.4470 0.7410]; h(2).DisplayName = 'BESS -> fogyasztás';
+%     h(3).FaceColor = [0.6350 0.0780 0.1840]; h(3).DisplayName = 'Grid -> fogyasztás';
+% 
+%     plot(time_hours, P_bess_charge, 'Color', [0.9290 0.6940 0.1250], ...
+%         'LineWidth', 2, 'DisplayName', 'BESS töltés');
+%     plot(time_hours, plot_load, 'k-', 'LineWidth', 1.2, 'DisplayName', 'Összes fogyasztás');
+% 
+%     yline(plot_plan.P_limit, 'k--', 'LineWidth', 2, 'DisplayName', 'Tervezett peak limit');
+%     yline(plot_plan.P_limit_ref, 'r:', 'LineWidth', 1.5, 'DisplayName', 'Referencia contract');
+% 
+%     ylabel('Teljesítmény [kW]');
+%     legend('Location', 'northeastoutside');
+% 
+%     subplot(3,1,2); hold on; grid on;
+%     title('Vételi ár és töltési/kisütési terv', 'FontSize', 12);
+% 
+%     plot(time_hours, plot_price.buy_huf, 'k', 'LineWidth', 1.5, ...
+%         'DisplayName', 'Vételi ár (HUF/kWh)');
+% 
+%     buy_idx = find(plot_plan.trade_buy_mask);
+%     if ~isempty(buy_idx)
+%         plot(time_hours(buy_idx), plot_price.buy_huf(buy_idx), 'g.', ...
+%             'MarkerSize', 15, 'DisplayName', 'Tervezett töltési ablak');
+%     end
+% 
+%     sell_idx = find(plot_plan.trade_sell_mask);
+%     if ~isempty(sell_idx)
+%         plot(time_hours(sell_idx), plot_price.buy_huf(sell_idx), 'r.', ...
+%             'MarkerSize', 15, 'DisplayName', 'Tervezett kisütési ablak');
+%     end
+%     ylabel('Ár [HUF/kWh]');
+%     legend('Location', 'northwest');
+%     xlim([0 24]);
+% 
+%     subplot(3,1,3); yyaxis left; hold on; grid on;
+%     E_net_kWh = plot_res.E_stored - plot_res.E_discharged;
+%     SOC_approx = soc_start_of_final_day + cumsum(E_net_kWh) / 1500;
+%     plot(time_hours, SOC_approx * 100, 'b', 'LineWidth', 2, 'DisplayName', 'SOC (%)');
+%     ylabel('SOC [%]');
+%     ylim([0 100]);
+% 
+%     yyaxis right;
+%     bar(time_hours, plot_res.E_bess_dc / dt_plot, ...
+%         'FaceColor', [0.3010 0.7450 0.9330], ...
+%         'EdgeColor', 'none', 'BarWidth', 1, ...
+%         'DisplayName', 'BESS DC teljesítmény');
+%     ylabel('BESS P [kW]');
+%     xlim([0 24]);
+%     xlabel('Idő [óra]');
+%     legend('Location', 'northeast');
+% end
+% 
+% function local_plot_best_period(best_detail)
+% 
+%     days_axis = best_detail.days_axis;
+% 
+%     figure('Name', sprintf('Hosszabb távú összesítő - optimális contract %.0f kW', best_detail.contract_kW), ...
+%         'Position', [200, 120, 1300, 950]);
+% 
+%     subplot(4,1,1); hold on; grid on;
+%     plot(days_axis, best_detail.daily_peak_no_bess,   'k--', 'LineWidth', 1.5, 'DisplayName', 'Peak BESS nélkül');
+%     plot(days_axis, best_detail.daily_peak_with_bess, 'b-',  'LineWidth', 1.8, 'DisplayName', 'Peak BESS-sel');
+%     plot(days_axis, best_detail.daily_planned_peak,   'm-',  'LineWidth', 1.6, 'DisplayName', 'MILP tervezett P_{peak}');
+%     yline(best_detail.contract_kW, 'r:', 'LineWidth', 1.5, ...
+%         'DisplayName', sprintf('Optimális contract = %.0f kW', best_detail.contract_kW));
+%     ylabel('Peak [kW]');
+%     title('Napi peak import és MILP tervezett peak');
+%     legend('Location', 'best');
+% 
+%     subplot(4,1,2); hold on; grid on;
+%     plot(days_axis, best_detail.daily_energy_cost,  'k-', 'LineWidth', 1.5, 'DisplayName', 'Energia költség');
+%     plot(days_axis, best_detail.daily_deg_cost,     'b-', 'LineWidth', 1.5, 'DisplayName', 'Degradáció');
+%     plot(days_axis, best_detail.daily_overrun_cost, 'r-', 'LineWidth', 1.5, 'DisplayName', 'Overrun proxy');
+%     plot(days_axis, best_detail.daily_total_cost,   'm-', 'LineWidth', 2,   'DisplayName', 'Összes napi költség');
+%     ylabel('Költség [HUF]');
+%     title('Napi költségösszetevők');
+%     legend('Location', 'best');
+% 
+%     subplot(4,1,3); hold on; grid on;
+%     bar(days_axis, best_detail.daily_bess_throughput, 'FaceColor', [0.2 0.6 0.8], 'DisplayName', 'Napi BESS throughput');
+%     ylabel('Energia [kWh]');
+%     title('Napi BESS igénybevétel');
+% 
+%     subplot(4,1,4); hold on; grid on;
+%     plot(days_axis, best_detail.daily_planned_peak,   'm-', 'LineWidth', 2, 'DisplayName', 'MILP napi optimális P');
+%     plot(days_axis, best_detail.daily_ref_contract,   'r--', 'LineWidth', 1.5, 'DisplayName', 'Fix contract');
+%     plot(days_axis, best_detail.daily_peak_with_bess, 'b:', 'LineWidth', 1.5, 'DisplayName', 'Tényleges napi peak');
+%     ylabel('Teljesítmény [kW]');
+%     xlabel('Nap index');
+%     title('Az algoritmus napi optimális peak-je és a contract');
+%     legend('Location', 'best');
+% end
+% 
+% % =========================================================================
+% % PEAK-ORIENTED, RULE-ASSISTED TARIFFA
+% % =========================================================================
+% function tariff = create_hungarian_mv_tariff_structure_peak_oriented()
+% 
+%     tariff = struct();
+% 
+%     tariff.class_name = 'Kozepfeszultsegu csatlakozas';
+% 
+%     % KÖF energiadíj komponensek
+%     tariff.distribution_energy_rate_huf_per_kWh = 8.39;
+%     tariff.transmission_energy_rate_huf_per_kWh = 3.39;
+% 
+%     % Éves díjak
+%     tariff.annual_contracted_power_fee_huf_per_kW = 15924;
+%     tariff.annual_base_fee_huf = 216504;
+% 
+%     % Ezt a sweep külsőleg állítja
+%     tariff.contracted_capacity_kW = 350;
+% 
+%     tariff.days_in_year = 365;
+%     tariff.ratchet_factor = 0.0;
+% 
+%     % Peak shaving erősítése
+%     tariff.penalty_rate_huf_per_kW_year = 4.0 * tariff.annual_contracted_power_fee_huf_per_kW;
+%     tariff.peak_shadow_weight = 0.08;
+% 
+%     % Rule-assisted paraméterek
+%     tariff.grid_charge_price_quantile = 0.25;                 % csak olcsóbb 25%-ban legyen kényelmes a hálózati töltés
+%     tariff.noncheap_charge_penalty_huf_per_kWh = 20.0;        % drágább órás töltés büntetése
+%     tariff.peak_reserve_soc = 0.50;                           % csúcsidőben minimum SoC
+%     tariff.peak_hours = [16, 22];                             % [start,end) órák
+%     tariff.curtailment_penalty_huf_per_kWh = 0.0;
+% end
+% 
+% % =========================================================================
+% % PEAK-ORIENTED, RULE-ASSISTED MILP
+% % =========================================================================
+% function plan = ems_day_ahead_planner_milp_peak_oriented( ...
+%     P_load_f, P_pv_dc_f, Prices, pars, tariff, dt_h, current_day_of_month, P_12month_max)
+% 
+%     N = length(P_load_f);
+% 
+%     P_load_f  = P_load_f(:);
+%     P_pv_dc_f = P_pv_dc_f(:);
+%     buy_p_market = Prices.buy_huf(:);
+% 
+%     eta_c_path = pars.inv_eta * pars.eta_c * pars.eta_cell;
+%     eta_d_path = pars.eta_cell * pars.eta_d * pars.inv_eta;
+%     cost_deg   = pars.degradation_cost_per_kWh;
+% 
+%     if isfield(pars, 'SoC_initial')
+%         SoC_start = pars.SoC_initial;
+%     else
+%         SoC_start = 0.5;
+%     end
+% 
+%     P_ch_max = pars.P_chg_max;
+%     P_dis_max = pars.P_dis_max;
+% 
+%     dist_energy_fee  = tariff.distribution_energy_rate_huf_per_kWh;
+%     trans_energy_fee = tariff.transmission_energy_rate_huf_per_kWh;
+%     buy_p_total = buy_p_market + dist_energy_fee + trans_energy_fee;
+% 
+%     P_contract = tariff.contracted_capacity_kW;
+%     annual_contract_rate = tariff.annual_contracted_power_fee_huf_per_kW;
+%     annual_base_fee = tariff.annual_base_fee_huf;
+%     annual_penalty_rate = tariff.penalty_rate_huf_per_kW_year;
+%     P_ratchet = tariff.ratchet_factor * P_12month_max;
+%     P_limit_ref = max(P_contract, P_ratchet);
+% 
+%     overrun_penalty_day = annual_penalty_rate / tariff.days_in_year;
+%     peak_shadow_day = tariff.peak_shadow_weight * (annual_contract_rate / tariff.days_in_year);
+% 
+%     P_pv_ac = min(P_pv_dc_f * pars.inv_eta, pars.P_inv_limit_ac);
+% 
+%     % ------------------------------------------------------------------
+%     % RULE-ASSISTED ELEMEK
+%     % ------------------------------------------------------------------
+%     qcheap = tariff.grid_charge_price_quantile;
+%     cheap_threshold = quantile(buy_p_market, qcheap);
+%     cheap_mask = buy_p_market <= cheap_threshold;
+% 
+%     % Ha nincs forecastolt PV többlet, a nem olcsó töltést büntetjük
+%     pv_surplus_mask = P_pv_ac > P_load_f;
+%     noncheap_charge_penalty = tariff.noncheap_charge_penalty_huf_per_kWh * ...
+%                               (~cheap_mask & ~pv_surplus_mask);
+% 
+%     % Peak órákra magasabb SoC minimum
+%     hours = mod((0:N-1)' * dt_h, 24);
+%     peak_hours = tariff.peak_hours; % [start,end)
+%     peak_window_mask = hours >= peak_hours(1) & hours < peak_hours(2);
+% 
+%     soc_min_vec = pars.SoC_min * ones(N,1);
+%     soc_min_vec(peak_window_mask) = max(pars.SoC_min, tariff.peak_reserve_soc);
+% 
+%     % ------------------------------------------------------------------
+%     % DÖNTÉSI VÁLTOZÓK
+%     % ------------------------------------------------------------------
+%     iGrid = 1:N;
+%     iCh   = N+1:2*N;
+%     iDis  = 2*N+1:3*N;
+%     iSoc  = 3*N+1:4*N;
+%     iMode = 4*N+1:5*N;
+%     iCurt = 5*N+1:6*N;
+%     iPeak = 6*N+1;
+%     iOver = 6*N+2;
+%     nVars = 6*N + 2;
+% 
+%     % ------------------------------------------------------------------
+%     % CÉLFÜGGVÉNY
+%     % ------------------------------------------------------------------
+%     f = zeros(nVars, 1);
+%     f(iGrid) = buy_p_total * dt_h;
+%     f(iCh)   = cost_deg * dt_h + noncheap_charge_penalty * dt_h;
+%     f(iDis)  = cost_deg * dt_h;
+%     f(iCurt) = tariff.curtailment_penalty_huf_per_kWh * dt_h;
+%     f(iPeak) = peak_shadow_day;
+%     f(iOver) = overrun_penalty_day;
+% 
+%     % ------------------------------------------------------------------
+%     % EGYENLŐSÉGI KORLÁTOK
+%     % ------------------------------------------------------------------
+%     Aeq_energy = zeros(N, nVars);
+%     beq_energy = P_load_f - P_pv_ac;
+% 
+%     for t = 1:N
+%         Aeq_energy(t, iGrid(t)) =  1;
+%         Aeq_energy(t, iDis(t))  =  1;
+%         Aeq_energy(t, iCh(t))   = -1;
+%         Aeq_energy(t, iCurt(t)) = -1;
+%     end
+% 
+%     Aeq_soc = zeros(N, nVars);
+%     beq_soc = zeros(N, 1);
+% 
+%     Aeq_soc(1, iSoc(1)) = 1;
+%     beq_soc(1) = SoC_start;
+% 
+%     alpha_ch = (eta_c_path * dt_h) / pars.E_cap_nom;
+%     beta_dis = (dt_h / eta_d_path) / pars.E_cap_nom;
+% 
+%     for t = 2:N
+%         Aeq_soc(t, iSoc(t))   =  1;
+%         Aeq_soc(t, iSoc(t-1)) = -1;
+%         Aeq_soc(t, iCh(t-1))  = -alpha_ch;
+%         Aeq_soc(t, iDis(t-1)) =  beta_dis;
+%     end
+% 
+%     Aeq = [Aeq_energy; Aeq_soc];
+%     beq = [beq_energy; beq_soc];
+% 
+%     % ------------------------------------------------------------------
+%     % EGYENLŐTLENSÉGI KORLÁTOK
+%     % ------------------------------------------------------------------
+%     A = [];
+%     b = [];
+% 
+%     % Töltés/kisütés bináris logika
+%     A_bin = zeros(2*N, nVars);
+%     b_bin = zeros(2*N, 1);
+% 
+%     for t = 1:N
+%         A_bin(t, iCh(t))   = 1;
+%         A_bin(t, iMode(t)) = -P_ch_max;
+%         b_bin(t) = 0;
+% 
+%         A_bin(N+t, iDis(t))  = 1;
+%         A_bin(N+t, iMode(t)) = P_dis_max;
+%         b_bin(N+t) = P_dis_max;
+%     end
+% 
+%     A = [A; A_bin];
+%     b = [b; b_bin];
+% 
+%     % Curtailment <= PV AC
+%     A_curt = zeros(N, nVars);
+%     b_curt = zeros(N, 1);
+%     for t = 1:N
+%         A_curt(t, iCurt(t)) = 1;
+%         b_curt(t) = P_pv_ac(t);
+%     end
+%     A = [A; A_curt];
+%     b = [b; b_curt];
+% 
+%     % Peak változó
+%     A_peak = zeros(N, nVars);
+%     b_peak = zeros(N, 1);
+%     for t = 1:N
+%         A_peak(t, iGrid(t)) = 1;
+%         A_peak(t, iPeak)    = -1;
+%     end
+%     A = [A; A_peak];
+%     b = [b; b_peak];
+% 
+%     % Overrun
+%     row_over = zeros(1, nVars);
+%     row_over(iPeak) = 1;
+%     row_over(iOver) = -1;
+%     A = [A; row_over];
+%     b = [b; P_limit_ref];
+% 
+%     % ------------------------------------------------------------------
+%     % KORLÁTOK
+%     % ------------------------------------------------------------------
+%     lb = zeros(nVars, 1);
+%     ub = inf(nVars, 1);
+% 
+%     lb(iSoc) = soc_min_vec;
+%     ub(iSoc) = pars.SoC_max;
+% 
+%     lb(iMode) = 0;
+%     ub(iMode) = 1;
+% 
+%     % ------------------------------------------------------------------
+%     % MEGOLDÁS
+%     % ------------------------------------------------------------------
+%     intcon = iMode;
+% 
+%     options = optimoptions('intlinprog', ...
+%         'Display', 'off', ...
+%         'MaxTime', 30, ...
+%         'RelativeGapTolerance', 0.01, ...
+%         'IntegerPreprocess', 'advanced', ...
+%         'RootLPAlgorithm', 'dual-simplex');
+% 
+%     [x, fval, exitflag] = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub, options);
+% 
+%     % ------------------------------------------------------------------
+%     % KIMENET
+%     % ------------------------------------------------------------------
+%     plan = struct();
+% 
+%     if isempty(x) || exitflag <= 0
+%         fallback_peak = max(max(P_load_f - P_pv_ac, 0), P_limit_ref);
+% 
+%         plan.P_limit = fallback_peak;
+%         plan.P_limit_ref = P_limit_ref;
+%         plan.P_over_contract = max(0, fallback_peak - P_limit_ref);
+% 
+%         plan.trade_buy_mask  = false(1, N);
+%         plan.trade_sell_mask = false(1, N);
+% 
+%         plan.P_grid_plan = max(P_load_f - P_pv_ac, 0);
+%         plan.P_ch_plan   = zeros(N, 1);
+%         plan.P_dis_plan  = zeros(N, 1);
+%         plan.P_curt_plan = max(P_pv_ac - P_load_f, 0);
+%         plan.SoC_plan    = SoC_start * ones(N, 1);
+% 
+%         plan.objective_value = inf;
+%         plan.exitflag = exitflag;
+% 
+%         plan.economics.energy_cost_market      = sum(buy_p_market .* plan.P_grid_plan) * dt_h;
+%         plan.economics.energy_cost_network     = sum((dist_energy_fee + trans_energy_fee) .* plan.P_grid_plan) * dt_h;
+%         plan.economics.energy_cost_total       = plan.economics.energy_cost_market + plan.economics.energy_cost_network;
+%         plan.economics.degradation_cost        = 0;
+%         plan.economics.overrun_cost_proxy      = overrun_penalty_day * plan.P_over_contract;
+%         plan.economics.peak_shadow_cost        = peak_shadow_day * plan.P_limit;
+%         plan.economics.net_cost_operational    = inf;
+%         plan.economics.contract_charge_annual  = annual_contract_rate * P_contract;
+%         plan.economics.base_fee_annual         = annual_base_fee;
+%         plan.economics.P_contract              = P_contract;
+%         plan.economics.P_limit_ref             = P_limit_ref;
+%         return;
+%     end
+% 
+%     P_grid = x(iGrid);
+%     P_ch   = x(iCh);
+%     P_dis  = x(iDis);
+%     SoC    = x(iSoc);
+%     P_curt = x(iCurt);
+%     P_peak = x(iPeak);
+%     P_over = x(iOver);
+% 
+%     plan.P_limit = P_peak;
+%     plan.P_limit_ref = P_limit_ref;
+%     plan.P_over_contract = P_over;
+% 
+%     plan.trade_buy_mask  = (P_ch  > 1e-3).';
+%     plan.trade_sell_mask = (P_dis > 1e-3).';
+% 
+%     plan.P_grid_plan = P_grid;
+%     plan.P_ch_plan   = P_ch;
+%     plan.P_dis_plan  = P_dis;
+%     plan.P_curt_plan = P_curt;
+%     plan.SoC_plan    = SoC;
+% 
+%     plan.objective_value = fval;
+%     plan.exitflag = exitflag;
+% 
+%     energy_cost_market  = sum(buy_p_market .* P_grid) * dt_h;
+%     energy_cost_network = sum((dist_energy_fee + trans_energy_fee) .* P_grid) * dt_h;
+%     degradation_cost    = sum(cost_deg .* (P_ch + P_dis)) * dt_h;
+%     overrun_cost_proxy  = overrun_penalty_day * P_over;
+%     peak_shadow_cost    = peak_shadow_day * P_peak;
+% 
+%     plan.economics.energy_cost_market      = energy_cost_market;
+%     plan.economics.energy_cost_network     = energy_cost_network;
+%     plan.economics.energy_cost_total       = energy_cost_market + energy_cost_network;
+%     plan.economics.degradation_cost        = degradation_cost;
+%     plan.economics.overrun_cost_proxy      = overrun_cost_proxy;
+%     plan.economics.peak_shadow_cost        = peak_shadow_cost;
+%     plan.economics.net_cost_operational    = fval;
+%     plan.economics.contract_charge_annual  = annual_contract_rate * P_contract;
+%     plan.economics.base_fee_annual         = annual_base_fee;
+%     plan.economics.P_contract              = P_contract;
+%     plan.economics.P_limit_ref             = P_limit_ref;
+% end
+% 
+% % =========================================================================
+% % ALAP BESS PARAMÉTEREK
+% % =========================================================================
+% function pars = base_battery_pars_nonideal_(E_cap_nom, Pmax)
+% 
+%     pars = struct();
+% 
+%     pars.E_cap_nom        = E_cap_nom;
+%     pars.P_rated          = Pmax;
+%     pars.C_chg_abs_max    = Pmax / max(E_cap_nom, eps);
+%     pars.C_dis_abs_max    = pars.C_chg_abs_max;
+%     pars.P_chg_max        = Pmax;
+%     pars.P_dis_max        = Pmax;
+% 
+%     pars.SoC_min          = 0.20;
+%     pars.SoC_max          = 0.80;
+%     pars.SoC_init         = 0.50;
+% 
+%     pars.eta_c            = 0.975;
+%     pars.eta_d            = 0.975;
+%     pars.k_ohm            = 0.020;
+% 
+%     pars.self_dis_per_h   = 2e-5;
+%     pars.cap_floor_frac   = 0.70;
+% 
+%     pars.inv_eta          = 0.97;
+%     pars.eta_c            = 0.98;
+%     pars.eta_d            = 0.98;
+% 
+%     pars.eta_cell         = 0.985;
+%     pars.eta_cell_min     = 0.90;
+% 
+%     pars.k_eta_C2         = 0.02;
+%     pars.k_eta_soc        = 0.02;
+%     pars.soc_ref          = 0.5;
+% 
+%     pars.R_growth_time_k  = 0.50;
+%     pars.R_growth_cap_k   = 1.00;
+% 
+%     C_abs                 = Pmax / max(E_cap_nom, eps);
+%     C_ref                 = min(C_abs, 0.5);
+%     pars.C_rec_chg        = C_ref;
+%     pars.C_rec_dis        = C_ref;
+% end
+% 
+% % =========================================================================
+% % REALTIME VÉGREHAJTÓ
+% % =========================================================================
+% function P_bess_dc_req = ems_realtime_decision_dc(P_pv_dc, P_load_actual, plan, pars)
+% 
+%     N = length(P_pv_dc);
+%     P_bess_dc_req = zeros(1, N);
+% 
+%     if ~isfield(plan, 'P_ch_plan') || ~isfield(plan, 'P_dis_plan')
+%         P_bess_dc_req(plan.trade_buy_mask)  = -pars.P_chg_max * pars.inv_eta;
+%         P_bess_dc_req(plan.trade_sell_mask) =  pars.P_dis_max / max(pars.inv_eta, eps);
+%         return;
+%     end
+% 
+%     P_ch_ac  = plan.P_ch_plan(:).';
+%     P_dis_ac = plan.P_dis_plan(:).';
+% 
+%     P_bess_dc_req = (P_dis_ac ./ max(pars.inv_eta, eps)) - (P_ch_ac .* pars.inv_eta);
+% 
+%     P_bess_dc_req = min(P_bess_dc_req,  pars.P_dis_max);
+%     P_bess_dc_req = max(P_bess_dc_req, -pars.P_chg_max);
+% 
+%     P_bess_dc_req(abs(P_bess_dc_req) < 1e-6) = 0;
+% end
+
+function test_single_bess_contract_search()
+% TEST_SINGLE_BESS_CONTRACT_SEARCH_PATTERN_BASED
+% Proxy keresés: 7 súlyozott nap
+% Validáció: 20 klaszterarányosan kiválasztott nap
+%
+% Külső függőségek:
+%   build_pv_cache
+%   build_load_price_cache
+%   bess_pack_model
+%   topology_dc_coupled
+
+    clc; close all;
+    fprintf('=== MINTAZAT-ALAPU GYORS CONTRACT KERESÉS ===\n');
+
+    % ---------------------------------------------------------------------
+    % 1) ADATOK BETÖLTÉSE
+    % ---------------------------------------------------------------------
+    fprintf('Adatok betöltése...\n');
+    PV_A = build_pv_cache(11, [95, 275], [274, 274], 0.325);
+    PV_B = build_pv_cache(11, [70, 250], [100.5, 100.5], 0.325);
+    [Load, Price] = build_load_price_cache();
+
+    FINAL_DAY = 260;
+    START_DAY = FINAL_DAY - 129;
+    nSimDays  = FINAL_DAY - START_DAY + 1;
+
+    % ---------------------------------------------------------------------
+    % 2) BESS PARAMÉTEREK
+    % ---------------------------------------------------------------------
+    E_bess_cap = 1500; % [kWh]
+    P_bess_max = 750;  % [kW]
+
+    pars = base_battery_pars_nonideal_(E_bess_cap, P_bess_max);
+    pars.P_inv_limit_ac = 550;
+    pars.degradation_cost_per_kWh = 5.0;
+
+    fprintf('BESS: E=%.1f kWh, P=%.1f kW\n', E_bess_cap, P_bess_max);
+    fprintf('Vizsgált napok: %d nap\n', nSimDays);
+
+    % ---------------------------------------------------------------------
+    % 3) NAPI CACHE
+    % ---------------------------------------------------------------------
+    fprintf('\n--- NAPI CACHE ÉPÍTÉSE ---\n');
+    t_cache = tic;
+    day_cache = local_build_day_cache(START_DAY, FINAL_DAY, PV_A, PV_B, Load, Price);
+    t_cache_done = toc(t_cache);
+    fprintf('Cache elkészült: %.2f s\n', t_cache_done);
+
+    % ---------------------------------------------------------------------
+    % 4) FEATURE-K
+    % ---------------------------------------------------------------------
+    fprintf('\n--- NAPI FEATURE-K ---\n');
+    features = local_build_daily_features(day_cache);
+
+    % ---------------------------------------------------------------------
+    % 5) PROXY HALMAZ (7 nap, súlyozott) - EZ MARAD
+    % ---------------------------------------------------------------------
+    rep_cfg_proxy.n_typical = 5;
+    rep_cfg_proxy.n_extreme = 2;
+
+    rep_set_proxy = local_select_representative_days_pattern_based(features, day_cache, rep_cfg_proxy);
+
+    fprintf('Proxy tipikus napok: ');
+    fprintf('%d ', rep_set_proxy.typical_day_indices);
+    fprintf('\n');
+
+    fprintf('Proxy extrém napok: ');
+    fprintf('%d ', rep_set_proxy.extreme_day_indices);
+    fprintf('\n');
+
+    fprintf('Proxy reprezentáns napok: ');
+    fprintf('%d ', rep_set_proxy.all_day_indices);
+    fprintf('\n');
+
+    fprintf('Proxy súlyok: ');
+    fprintf('%.3f ', rep_set_proxy.weights);
+    fprintf('\n');
+
+    % ---------------------------------------------------------------------
+    % 6) VALIDÁCIÓS HALMAZ (20 nap, klaszterarányosan, súlyozás nélkül)
+    % ---------------------------------------------------------------------
+    rep_cfg_valid.n_clusters = 5;
+    rep_cfg_valid.n_validation_days_total = 20;
+    rep_cfg_valid.n_extreme_force = 4;
+
+    rep_set_valid = local_select_validation_days_pattern_based(features, day_cache, rep_cfg_valid);
+
+    fprintf('\nValidációs napok száma: %d\n', numel(rep_set_valid.validation_day_indices));
+    fprintf('Validációs napok: ');
+    fprintf('%d ', rep_set_valid.validation_day_indices);
+    fprintf('\n');
+
+    fprintf('Klaszterenként kiosztott validációs napok: ');
+    fprintf('%d ', rep_set_valid.cluster_sample_counts);
+    fprintf('\n');
+
+    % ---------------------------------------------------------------------
+    % 7) CONTRACT KERESÉSI TARTOMÁNY
+    % ---------------------------------------------------------------------
+    no_bess_peaks = arrayfun(@(d) d.no_bess_peak, day_cache);
+    peak_stats = analyze_daily_peak_distribution(no_bess_peaks, P_bess_max);
+
+    contract_bounds = [peak_stats.search_low_kW, peak_stats.search_high_kW];
+    coarse_step = 25;
+    fine_step   = 10;
+    start_guess = peak_stats.initial_guess_kW;
+
+    fprintf('\n--- CONTRACT KERESÉSI TARTOMÁNY ---\n');
+    fprintf('p75 = %.2f kW\n', peak_stats.p75);
+    fprintf('p90 = %.2f kW\n', peak_stats.p90);
+    fprintf('p95 = %.2f kW\n', peak_stats.p95);
+    fprintf('p99 = %.2f kW\n', peak_stats.p99);
+    fprintf('Keresési tartomány: [%g, %g] kW\n', contract_bounds(1), contract_bounds(2));
+    fprintf('Induló tipp: %.1f kW\n', start_guess);
+
+    plot_daily_peak_distribution(no_bess_peaks, peak_stats);
+    local_plot_representative_day_selection(features, rep_set_proxy);
+    local_plot_validation_day_selection(features, rep_set_valid);
+
+    % ---------------------------------------------------------------------
+    % 8) GYORS PROXY CONTRACT KERESÉS - 7 NAP, SÚLYOZVA
+    % ---------------------------------------------------------------------
+    fprintf('\n--- GYORS CONTRACT KERESÉS (7 SÚLYOZOTT PROXY NAP) ---\n');
+    t_proxy = tic;
+    search_log = local_local_contract_search_weighted( ...
+        start_guess, contract_bounds, coarse_step, fine_step, ...
+        day_cache, rep_set_proxy, pars);
+    t_proxy_done = toc(t_proxy);
+
+    fprintf('Gyors proxy keresés kész: %.2f s\n', t_proxy_done);
+    fprintf('Proxy optimum: %.1f kW\n', search_log.best_proxy_contract_kW);
+
+    % ---------------------------------------------------------------------
+    % 9) VALIDÁCIÓS CONTRACT JELÖLTEK
+    % ---------------------------------------------------------------------
+    validation_candidates = unique(sort([ ...
+        search_log.best_proxy_contract_kW - 20, ...
+        search_log.best_proxy_contract_kW - 10, ...
+        search_log.best_proxy_contract_kW, ...
+        search_log.best_proxy_contract_kW + 10, ...
+        search_log.best_proxy_contract_kW + 20 ]));
+
+    validation_candidates = validation_candidates( ...
+        validation_candidates >= contract_bounds(1) & ...
+        validation_candidates <= contract_bounds(2));
+
+    fprintf('\n--- RÉSZLETES VALIDÁCIÓ (20 NAPOS MINTÁN) ---\n');
+    fprintf('Validációs contract jelöltek: ');
+    fprintf('%.0f ', validation_candidates);
+    fprintf('[kW]\n');
+
+    t_valid = tic;
+    validation_results = local_validate_contract_candidates_on_subset( ...
+        validation_candidates, day_cache, rep_set_valid.validation_day_indices, pars, true);
+    t_valid_done = toc(t_valid);
+
+    [~, idx_best] = min([validation_results.total_cost_period_huf]);
+    best_detail = validation_results(idx_best);
+
+    % ---------------------------------------------------------------------
+    % 10) LOGOK
+    % ---------------------------------------------------------------------
+    total_runtime = t_cache_done + t_proxy_done + t_valid_done;
+
+    fprintf('\n================ ÖSSZEFOGLALÓ ================\n');
+    fprintf('Cache idő:                               %.2f s\n', t_cache_done);
+    fprintf('Proxy keresés ideje:                     %.2f s\n', t_proxy_done);
+    fprintf('20 napos validáció ideje:                %.2f s\n', t_valid_done);
+    fprintf('Teljes script idő:                       %.2f s\n', total_runtime);
+
+    fprintf('\nProxy napok száma:                       %d\n', numel(rep_set_proxy.all_day_indices));
+    fprintf('Validációs napok száma:                  %d\n', numel(rep_set_valid.validation_day_indices));
+    fprintf('Gyors keresés kiértékelt pontok száma:   %d\n', numel(search_log.history));
+    fprintf('Proxy optimum:                           %.1f kW\n', search_log.best_proxy_contract_kW);
+    fprintf('Validált optimum (20 nap alapján):       %.1f kW\n', best_detail.contract_kW);
+
+    fprintf('\n=== LEGJOBB VALIDÁLT CONTRACT EREDMÉNYEI ===\n');
+    fprintf('Contract költség (skálázva):             %.2f HUF\n', best_detail.contract_cost_period_huf);
+    fprintf('Energia költség (skálázva):              %.2f HUF\n', best_detail.energy_cost_period_huf);
+    fprintf('Degradációs költség (skálázva):          %.2f HUF\n', best_detail.degradation_cost_period_huf);
+    fprintf('Overrun proxy költség (skálázva):        %.2f HUF\n', best_detail.overrun_cost_period_huf);
+    fprintf('Peak shadow költség (skálázva):          %.2f HUF\n', best_detail.peak_shadow_cost_period_huf);
+    fprintf('Teljes költség (skálázva):               %.2f HUF\n', best_detail.total_cost_period_huf);
+
+    fprintf('\nPeak statisztikák a 20 napos validációs mintán:\n');
+    fprintf('No-BESS max napi peak:                   %.2f kW\n', max(best_detail.daily_peak_no_bess));
+    fprintf('BESS max napi peak:                      %.2f kW\n', max(best_detail.daily_peak_with_bess));
+    fprintf('BESS átlagos napi peak:                  %.2f kW\n', mean(best_detail.daily_peak_with_bess));
+    fprintf('BESS 95%% napi peak:                      %.2f kW\n', prctile(best_detail.daily_peak_with_bess, 95));
+    fprintf('MILP átlagos tervezett peak:             %.2f kW\n', mean(best_detail.daily_planned_peak));
+    fprintf('Átlagos napi BESS throughput:            %.2f kWh/nap\n', mean(best_detail.daily_bess_throughput));
+    fprintf('Túllépéses napok száma:                  %d / %d\n', ...
+        sum(best_detail.daily_peak_with_bess > best_detail.daily_ref_contract + 1e-6), ...
+        numel(rep_set_valid.validation_day_indices));
+
+    % ---------------------------------------------------------------------
+    % 11) PLOTOK
+    % ---------------------------------------------------------------------
+    local_plot_search_and_validation(search_log, validation_results, best_detail);
+    local_plot_best_day(best_detail, pars);
+    local_plot_best_period(best_detail);
+
+    fprintf('\n=== KÉSZ ===\n');
+end
+
+% =========================================================================
+% NAPI CACHE
+% =========================================================================
+function day_cache = local_build_day_cache(START_DAY, FINAL_DAY, PV_A, PV_B, Load, Price)
+
+    nSimDays = FINAL_DAY - START_DAY + 1;
+    day_cache = repmat(struct(), 1, nSimDays);
+
+    for d = START_DAY:FINAL_DAY
+        ii = d - START_DAY + 1;
+
+        dt_h = PV_A(d).dt_h;
+
+        P_pv_dc_actual = (PV_A(d).Ppv + PV_B(d).Ppv) / 1000;
+        P_load_actual  = Load(d).P_load_kW;
+        Prices_today   = Price(d);
+
+        P_load_f_today = Load(d).P_load_kW;
+        P_pv_f_today   = (PV_A(d).Ppv + PV_B(d).Ppv) / 1000;
+
+        P_load_f_tomorrow = Load(d+1).P_load_kW;
+        P_pv_f_tomorrow   = (PV_A(d+1).Ppv + PV_B(d+1).Ppv) / 1000;
+        Prices_tomorrow   = Price(d+1);
+
+        P_load_48h = [P_load_f_today, P_load_f_tomorrow];
+        P_pv_48h   = [P_pv_f_today,   P_pv_f_tomorrow];
+
+        Prices_48h = struct();
+        Prices_48h.buy_huf = [Prices_today.buy_huf, Prices_tomorrow.buy_huf];
+
+        P_grid_no_bess_day = max(P_load_actual - P_pv_dc_actual * 0.97, 0);
+
+        day_cache(ii).abs_day = d;
+        day_cache(ii).dt_h = dt_h;
+
+        day_cache(ii).P_pv_dc_actual = P_pv_dc_actual;
+        day_cache(ii).P_load_actual  = P_load_actual;
+        day_cache(ii).Prices_today   = Prices_today;
+
+        day_cache(ii).P_load_48h = P_load_48h;
+        day_cache(ii).P_pv_48h   = P_pv_48h;
+        day_cache(ii).Prices_48h = Prices_48h;
+
+        day_cache(ii).P_grid_no_bess_day = P_grid_no_bess_day;
+        day_cache(ii).no_bess_peak = max(P_grid_no_bess_day);
+    end
+end
+
+% =========================================================================
+% NAPI FEATURE-K
+% =========================================================================
+function features = local_build_daily_features(day_cache)
+
+    nDays = numel(day_cache);
+    X = zeros(nDays, 10);
+
+    for i = 1:nDays
+        dc = day_cache(i);
+
+        P_load = dc.P_load_actual(:);
+        P_pv   = dc.P_pv_dc_actual(:) * 0.97;
+        P_grid = dc.P_grid_no_bess_day(:);
+        p_buy  = dc.Prices_today.buy_huf(:);
+
+        N = numel(P_load);
+        time_h = (0:N-1)' * dc.dt_h;
+
+        evening_mask = time_h >= 16 & time_h < 22;
+        morning_mask = time_h >= 6 & time_h < 10;
+
+        load_energy = sum(P_load) * dc.dt_h;
+        load_peak   = max(P_load);
+        load_mean   = mean(P_load);
+
+        pv_energy = sum(P_pv) * dc.dt_h;
+        pv_peak   = max(P_pv);
+
+        grid_energy = sum(P_grid) * dc.dt_h;
+        grid_peak   = max(P_grid);
+        evening_grid_peak = max(P_grid(evening_mask));
+        morning_grid_peak = max(P_grid(morning_mask));
+
+        price_mean = mean(p_buy);
+        price_spread = max(p_buy) - min(p_buy);
+
+        X(i,:) = [ ...
+            load_energy, ...
+            load_peak, ...
+            load_mean, ...
+            pv_energy, ...
+            pv_peak, ...
+            grid_energy, ...
+            grid_peak, ...
+            evening_grid_peak, ...
+            price_mean, ...
+            price_spread ];
+    end
+
+    features = struct();
+    features.raw = X;
+    features.z   = local_zscore(X);
+end
+
+% =========================================================================
+% MINTÁZAT-ALAPÚ REPREZENTÁNS NAP KIVÁLASZTÁS
+% =========================================================================
+function rep_set = local_select_validation_days_pattern_based(features, day_cache, cfg)
+% 20 napos validációs minta klaszterarányosan.
+% NINCS súlyozás.
+%
+% Logika:
+% - klaszterezés
+% - klaszterenként kiosztott darabszám
+% - extrém napok garantált bevétele
+% - klaszteren belül centroid-közeli napok választása
+
+    X = features.z;
+    nDays = size(X,1);
+
+    n_clusters = cfg.n_clusters;
+    n_total = cfg.n_validation_days_total;
+    n_extreme_force = cfg.n_extreme_force;
+
+    [cluster_id, centers] = local_kmeans_basic(X, n_clusters, 50);
+
+    cluster_sizes = zeros(1, n_clusters);
+    for k = 1:n_clusters
+        cluster_sizes(k) = sum(cluster_id == k);
+    end
+    cluster_frac = cluster_sizes / sum(cluster_sizes);
+
+    raw_counts = cluster_frac * n_total;
+    base_counts = floor(raw_counts);
+    remainder = n_total - sum(base_counts);
+
+    frac_part = raw_counts - base_counts;
+    [~, idx_frac] = sort(frac_part, 'descend');
+
+    cluster_sample_counts = base_counts;
+    for j = 1:remainder
+        cluster_sample_counts(idx_frac(j)) = cluster_sample_counts(idx_frac(j)) + 1;
+    end
+
+    for k = 1:n_clusters
+        if cluster_sizes(k) > 0 && cluster_sample_counts(k) == 0
+            cluster_sample_counts(k) = 1;
+        end
+    end
+
+    while sum(cluster_sample_counts) > n_total
+        eligible = find(cluster_sample_counts > 1);
+        if isempty(eligible), break; end
+        [~, imax] = max(cluster_sample_counts(eligible));
+        cluster_sample_counts(eligible(imax)) = cluster_sample_counts(eligible(imax)) - 1;
+    end
+
+    no_bess_peak = arrayfun(@(d) d.no_bess_peak, day_cache);
+    [~, idx_sorted_peak] = sort(no_bess_peak, 'descend');
+
+    extreme_day_indices = unique(idx_sorted_peak(1:min(n_extreme_force, nDays)));
+
+    validation_days = extreme_day_indices(:).';
+
+    for k = 1:n_clusters
+        idx_k = find(cluster_id == k);
+        if isempty(idx_k)
+            continue;
+        end
+
+        need_k = cluster_sample_counts(k);
+
+        already_k = idx_k(ismember(idx_k, validation_days));
+        n_already = numel(already_k);
+        n_to_add = max(0, need_k - n_already);
+
+        if n_to_add == 0
+            continue;
+        end
+
+        Xk = X(idx_k,:);
+        ck = centers(k,:);
+        d2 = sum((Xk - ck).^2, 2);
+        [~, order] = sort(d2, 'ascend');
+        cand = idx_k(order);
+
+        cand = cand(~ismember(cand, validation_days));
+        cand = cand(1:min(n_to_add, numel(cand)));
+
+        validation_days = [validation_days, cand(:).']; %#ok<AGROW>
+    end
+
+    if numel(validation_days) < n_total
+        remaining = setdiff(1:nDays, validation_days, 'stable');
+        n_missing = n_total - numel(validation_days);
+        validation_days = [validation_days, remaining(1:min(n_missing, numel(remaining)))];
+    end
+
+    if numel(validation_days) > n_total
+        [~, ord] = sort(no_bess_peak(validation_days), 'descend');
+        validation_days = validation_days(ord);
+        validation_days = validation_days(1:n_total);
+    end
+
+    validation_days = unique(validation_days, 'stable');
+
+    if numel(validation_days) < n_total
+        remaining = setdiff(1:nDays, validation_days, 'stable');
+        n_missing = n_total - numel(validation_days);
+        validation_days = [validation_days, remaining(1:min(n_missing, numel(remaining)))];
+    end
+
+    rep_set = struct();
+    rep_set.cluster_id = cluster_id;
+    rep_set.centers = centers;
+    rep_set.cluster_sizes = cluster_sizes;
+    rep_set.cluster_sample_counts = cluster_sample_counts;
+    rep_set.extreme_day_indices = extreme_day_indices;
+    rep_set.validation_day_indices = sort(validation_days(:).');
+end
+
+function plot_daily_peak_distribution(daily_peak_no_bess, stats)
+    x = daily_peak_no_bess(:);
+    xs = sort(x);
+
+    figure('Name', 'Napi no-BESS peak eloszlás', 'Position', [120, 120, 1200, 800]);
+
+    subplot(2,1,1); hold on; grid on;
+    histogram(x, 30);
+    xline(stats.p75, '--', 'LineWidth', 1.5, 'DisplayName', 'p75');
+    xline(stats.p90, '--', 'LineWidth', 1.5, 'DisplayName', 'p90');
+    xline(stats.p95, '--', 'LineWidth', 1.5, 'DisplayName', 'p95');
+    xline(stats.p99, '--', 'LineWidth', 1.5, 'DisplayName', 'p99');
+    xline(stats.search_low_kW, 'r--', 'LineWidth', 2, 'DisplayName', 'search low');
+    xline(stats.search_high_kW, 'g--', 'LineWidth', 2, 'DisplayName', 'search high');
+    xlabel('Napi no-BESS peak [kW]');
+    ylabel('Napok száma');
+    title('Napi maximumok hisztogramja');
+    legend('Location', 'best');
+
+    subplot(2,1,2); hold on; grid on;
+    plot(xs, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Rendezett napi peak-ek');
+    yline(stats.p75, '--', 'LineWidth', 1.5, 'DisplayName', 'p75');
+    yline(stats.p90, '--', 'LineWidth', 1.5, 'DisplayName', 'p90');
+    yline(stats.p95, '--', 'LineWidth', 1.5, 'DisplayName', 'p95');
+    yline(stats.p99, '--', 'LineWidth', 1.5, 'DisplayName', 'p99');
+    yline(stats.search_low_kW, 'r--', 'LineWidth', 2, 'DisplayName', 'search low');
+    yline(stats.search_high_kW, 'g--', 'LineWidth', 2, 'DisplayName', 'search high');
+    xlabel('Rendezett nap index');
+    ylabel('Napi no-BESS peak [kW]');
+    title('Rendezett napi maximumok');
+    legend('Location', 'best');
+end
+
+function local_plot_validation_day_selection(features, rep_set)
+
+    X = features.z;
+
+    figure('Name', 'Validációs napok kiválasztása', 'Position', [160, 160, 1000, 700]);
+    hold on; grid on;
+
+    scatter(X(:,7), X(:,8), 40, rep_set.cluster_id, 'filled', 'DisplayName', 'Összes nap');
+    scatter(X(rep_set.validation_day_indices,7), X(rep_set.validation_day_indices,8), ...
+        120, 'kd', 'LineWidth', 2, 'DisplayName', 'Validációs napok');
+    scatter(X(rep_set.extreme_day_indices,7), X(rep_set.extreme_day_indices,8), ...
+        150, 'rs', 'LineWidth', 2, 'DisplayName', 'Garantált extrém napok');
+
+    xlabel('z(no-BESS napi peak)');
+    ylabel('z(esti no-BESS peak)');
+    title('20 napos validációs minta');
+    legend('Location', 'best');
+end
+
+% =========================================================================
+% SÚLYOZOTT LOKÁLIS CONTRACT KERESÉS
+% =========================================================================
+function rep_set = local_select_representative_days_pattern_based(features, day_cache, cfg)
+% 7 napos, súlyozott proxy halmaz kiválasztása.
+%
+% Logika:
+% - n_typical darab klaszter-közeli tipikus nap
+% - n_extreme darab extrém peak nap
+% - tipikus napok súlya a klasztermérettel arányos
+% - extrém napok külön fix súlyt kapnak
+
+    X = features.z;
+
+    n_typical = cfg.n_typical;
+    n_extreme = cfg.n_extreme;
+
+    [cluster_id, centers] = local_kmeans_basic(X, n_typical, 50);
+
+    typical_day_indices = zeros(1, n_typical);
+    cluster_weights = zeros(1, n_typical);
+
+    for k = 1:n_typical
+        idx_k = find(cluster_id == k);
+        cluster_weights(k) = numel(idx_k);
+
+        if isempty(idx_k)
+            typical_day_indices(k) = 1;
+            continue;
+        end
+
+        Xk = X(idx_k,:);
+        ck = centers(k,:);
+        d2 = sum((Xk - ck).^2, 2);
+        [~, imin] = min(d2);
+        typical_day_indices(k) = idx_k(imin);
+    end
+
+    % Extrém napok a napi no-BESS peak alapján
+    no_bess_peak = arrayfun(@(d) d.no_bess_peak, day_cache);
+    [~, idx_sorted_peak] = sort(no_bess_peak, 'descend');
+
+    extreme_day_indices = [];
+    for j = 1:numel(idx_sorted_peak)
+        cand = idx_sorted_peak(j);
+        if ~ismember(cand, typical_day_indices)
+            extreme_day_indices(end+1) = cand; %#ok<AGROW>
+        end
+        if numel(extreme_day_indices) >= n_extreme
+            break;
+        end
+    end
+
+    all_day_indices = [typical_day_indices, extreme_day_indices];
+
+    % Súlyok
+    % tipikus napok: klaszterméret alapján
+    % extrém napok: külön fix súly
+    extreme_weight_each = max(1, round(0.5 * mean(cluster_weights)));
+
+    weights = [cluster_weights, repmat(extreme_weight_each, 1, numel(extreme_day_indices))];
+    weights = weights / sum(weights);
+
+    rep_set = struct();
+    rep_set.cluster_id = cluster_id;
+    rep_set.centers = centers;
+    rep_set.typical_day_indices = typical_day_indices;
+    rep_set.extreme_day_indices = extreme_day_indices;
+    rep_set.all_day_indices = all_day_indices;
+    rep_set.weights = weights;
+end
+
+function row = local_make_history_row(contract_kW, proxy_cost_huf, stage_name)
+    row = struct();
+    row.contract_kW = contract_kW;
+    row.proxy_cost_huf = proxy_cost_huf;
+    row.stage = char(stage_name);
+end
+
+% =========================================================================
+% TELJES FIZIKAI VALIDÁCIÓ
+% =========================================================================
+function results = local_validate_contract_candidates_on_subset( ...
+    contract_candidates, day_cache, validation_day_indices, pars_in, store_detail)
+
+    nC = numel(contract_candidates);
+    results = [];
+
+    for i = 1:nC
+        contract_kW = contract_candidates(i);
+        fprintf('Validáció (20 napos minta): %.1f kW ...\n', contract_kW);
+
+        t_one = tic;
+        res_i = local_run_single_contract_on_subset(contract_kW, day_cache, validation_day_indices, pars_in, store_detail);
+        res_i.runtime_s = toc(t_one);
+
+        if i == 1
+            results = repmat(res_i, 1, nC);
+        end
+        results(i) = res_i;
+
+        fprintf('  total cost = %.2f HUF | runtime = %.2f s\n', ...
+            res_i.total_cost_period_huf, res_i.runtime_s);
+    end
+end
+
+function result = local_run_single_contract_on_subset(contract_kW, day_cache, validation_day_indices, pars_in, store_detail)
+
+    nValDays = numel(validation_day_indices);
+    total_days_full_period = numel(day_cache);
+    days_in_year = 365;
+
+    pars = pars_in;
+
+    init_params = struct( ...
+        'target_energy_kWh', pars.E_cap_nom, ...
+        'max_power_W', pars.P_rated * 1000, ...
+        'initial_soc', 0.5);
+
+    [pack_info, state_bess] = bess_pack_model(0, 'init', init_params, 1/12, []);
+    pars.E_cap_nom = pack_info.E_installed_kWh;
+
+    P_12month_max = 0;
+    current_month_peak = 0;
+
+    daily_peak_no_bess    = zeros(1, nValDays);
+    daily_peak_with_bess  = zeros(1, nValDays);
+    daily_energy_cost     = zeros(1, nValDays);
+    daily_deg_cost        = zeros(1, nValDays);
+    daily_overrun_cost    = zeros(1, nValDays);
+    daily_peak_shadow     = zeros(1, nValDays);
+    daily_total_cost      = zeros(1, nValDays);
+    daily_bess_throughput = zeros(1, nValDays);
+    daily_planned_peak    = zeros(1, nValDays);
+    daily_ref_contract    = zeros(1, nValDays);
+
+    plot_plan = [];
+    plot_res = [];
+    plot_load = [];
+    plot_pv = [];
+    plot_price = [];
+    soc_start_of_final_day = NaN;
+
+    tariff = create_hungarian_mv_tariff_structure();
+    tariff.contracted_capacity_kW = contract_kW;
+
+    for kk = 1:nValDays
+        ii = validation_day_indices(kk);
+        dc = day_cache(ii);
+
+        if kk == nValDays
+            soc_start_of_final_day = state_bess.cell_state.SOC;
+        end
+
+        current_day_of_month = mod(dc.abs_day-1, 30) + 1;
+
+        plan_full = ems_day_ahead_planner_milp_peak_oriented( ...
+            dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, pars, tariff, dc.dt_h, ...
+            current_day_of_month, P_12month_max);
+
+        nDay = length(dc.P_load_actual);
+
+        plan_today = plan_full;
+        plan_today.trade_buy_mask  = plan_full.trade_buy_mask(1:nDay);
+        plan_today.trade_sell_mask = plan_full.trade_sell_mask(1:nDay);
+        plan_today.P_ch_plan       = plan_full.P_ch_plan(1:nDay);
+        plan_today.P_dis_plan      = plan_full.P_dis_plan(1:nDay);
+        plan_today.P_grid_plan     = plan_full.P_grid_plan(1:nDay);
+        plan_today.P_curt_plan     = plan_full.P_curt_plan(1:nDay);
+        plan_today.SoC_plan        = plan_full.SoC_plan(1:nDay);
+
+        P_bess_dc_req_kW = ems_realtime_decision_dc( ...
+            dc.P_pv_dc_actual, dc.P_load_actual, plan_today, pars);
+
+        [dayRes, state_bess] = topology_dc_coupled( ...
+            P_bess_dc_req_kW, dc.P_pv_dc_actual, dc.P_load_actual, ...
+            dc.Prices_today, pars, state_bess, dc.dt_h);
+
+        actual_daily_peak = max(dayRes.E_grid_import) / dc.dt_h;
+        current_month_peak = max(current_month_peak, actual_daily_peak);
+
+        P_grid_with_bess_day = dayRes.E_grid_import / dc.dt_h;
+
+        daily_peak_no_bess(kk)    = dc.no_bess_peak;
+        daily_peak_with_bess(kk)  = max(P_grid_with_bess_day);
+        daily_energy_cost(kk)     = plan_today.economics.energy_cost_total;
+        daily_deg_cost(kk)        = plan_today.economics.degradation_cost;
+        daily_overrun_cost(kk)    = plan_today.economics.overrun_cost_proxy;
+        daily_peak_shadow(kk)     = plan_today.economics.peak_shadow_cost;
+        daily_total_cost(kk)      = plan_today.economics.energy_cost_total + ...
+                                    plan_today.economics.degradation_cost + ...
+                                    plan_today.economics.overrun_cost_proxy + ...
+                                    plan_today.economics.peak_shadow_cost;
+        daily_bess_throughput(kk) = sum(dayRes.E_stored + dayRes.E_discharged);
+        daily_planned_peak(kk)    = plan_today.P_limit;
+        daily_ref_contract(kk)    = plan_today.P_limit_ref;
+
+        if store_detail && kk == nValDays
+            plot_plan  = plan_today;
+            plot_res   = dayRes;
+            plot_load  = dc.P_load_actual;
+            plot_pv    = dc.P_pv_dc_actual;
+            plot_price = dc.Prices_today;
+        end
+    end
+
+    % A 20 napos validációs minta átlagos napi költségét visszaskálázzuk
+    avg_energy_cost  = mean(daily_energy_cost);
+    avg_deg_cost     = mean(daily_deg_cost);
+    avg_overrun_cost = mean(daily_overrun_cost);
+    avg_peak_shadow  = mean(daily_peak_shadow);
+
+    period_energy_cost  = avg_energy_cost  * total_days_full_period;
+    period_deg_cost     = avg_deg_cost     * total_days_full_period;
+    period_overrun_cost = avg_overrun_cost * total_days_full_period;
+    period_peak_shadow  = avg_peak_shadow  * total_days_full_period;
+
+    contract_cost_period = (total_days_full_period / days_in_year) * ...
+        (tariff.annual_contracted_power_fee_huf_per_kW * contract_kW + tariff.annual_base_fee_huf);
+
+    result = struct();
+    result.contract_kW = contract_kW;
+
+    result.energy_cost_period_huf       = period_energy_cost;
+    result.degradation_cost_period_huf  = period_deg_cost;
+    result.overrun_cost_period_huf      = period_overrun_cost;
+    result.peak_shadow_cost_period_huf  = period_peak_shadow;
+    result.contract_cost_period_huf     = contract_cost_period;
+
+    result.total_cost_period_huf = result.energy_cost_period_huf + ...
+                                   result.degradation_cost_period_huf + ...
+                                   result.overrun_cost_period_huf + ...
+                                   result.peak_shadow_cost_period_huf + ...
+                                   result.contract_cost_period_huf;
+
+    result.daily_peak_no_bess      = daily_peak_no_bess;
+    result.daily_peak_with_bess    = daily_peak_with_bess;
+    result.daily_energy_cost       = daily_energy_cost;
+    result.daily_deg_cost          = daily_deg_cost;
+    result.daily_overrun_cost      = daily_overrun_cost;
+    result.daily_peak_shadow       = daily_peak_shadow;
+    result.daily_total_cost        = daily_total_cost;
+    result.daily_bess_throughput   = daily_bess_throughput;
+    result.daily_planned_peak      = daily_planned_peak;
+    result.daily_ref_contract      = daily_ref_contract;
+    result.days_axis               = [day_cache(validation_day_indices).abs_day];
+
+    result.final_day = struct();
+    result.final_day.plan      = plot_plan;
+    result.final_day.res       = plot_res;
+    result.final_day.load      = plot_load;
+    result.final_day.pv        = plot_pv;
+    result.final_day.price     = plot_price;
+    result.final_day.soc_start = soc_start_of_final_day;
+end
+
+% =========================================================================
+% PLOTOK
+% =========================================================================
+function local_plot_search_and_validation(search_log, validation_results, best_detail)
+
+    hist = search_log.history;
+    proxy_contracts = [hist.contract_kW];
+    proxy_costs     = [hist.proxy_cost_huf];
+
+    [proxy_contracts_sorted, idx_sort] = sort(proxy_contracts);
+    proxy_costs_sorted = proxy_costs(idx_sort);
+    [proxy_contracts_unique, ia] = unique(proxy_contracts_sorted, 'last');
+    proxy_costs_unique = proxy_costs_sorted(ia);
+
+    val_contracts = [validation_results.contract_kW];
+    val_total     = [validation_results.total_cost_period_huf];
+    val_energy    = [validation_results.energy_cost_period_huf];
+    val_deg       = [validation_results.degradation_cost_period_huf];
+    val_over      = [validation_results.overrun_cost_period_huf];
+    val_contractc = [validation_results.contract_cost_period_huf];
+    val_runtime   = [validation_results.runtime_s];
+    val_maxpeak   = arrayfun(@(s) max(s.daily_peak_with_bess), validation_results);
+    val_meanpeak  = arrayfun(@(s) mean(s.daily_peak_with_bess), validation_results);
+    val_p95peak   = arrayfun(@(s) prctile(s.daily_peak_with_bess, 95), validation_results);
+    val_overdays  = arrayfun(@(s) sum(s.daily_peak_with_bess > s.contract_kW + 1e-6), validation_results);
+
+    [val_contracts, idxv] = sort(val_contracts);
+    val_total     = val_total(idxv);
+    val_energy    = val_energy(idxv);
+    val_deg       = val_deg(idxv);
+    val_over      = val_over(idxv);
+    val_contractc = val_contractc(idxv);
+    val_runtime   = val_runtime(idxv);
+    val_maxpeak   = val_maxpeak(idxv);
+    val_meanpeak  = val_meanpeak(idxv);
+    val_p95peak   = val_p95peak(idxv);
+    val_overdays  = val_overdays(idxv);
+
+    figure('Name', 'Contract keresés és validáció', 'Position', [80, 80, 1350, 920]);
+
+    subplot(2,2,1); hold on; grid on;
+    plot(proxy_contracts_unique, proxy_costs_unique, 'k--o', 'LineWidth', 1.5, ...
+        'DisplayName', 'Proxy keresési költség');
+    plot(val_contracts, val_total, 'b-o', 'LineWidth', 2, 'DisplayName', 'Validált teljes költség');
+    xline(best_detail.contract_kW, 'r--', 'LineWidth', 1.5, ...
+        'DisplayName', sprintf('Optimális contract = %.0f kW', best_detail.contract_kW));
+    xlabel('Lekötött teljesítmény [kW]');
+    ylabel('Költség [HUF]');
+    title('Teljes költség a contract függvényében');
+    legend('Location', 'best');
+
+    subplot(2,2,2); hold on; grid on;
+    plot(val_contracts, val_energy,    'k-', 'LineWidth', 1.5, 'DisplayName', 'Energia');
+    plot(val_contracts, val_deg,       'b-', 'LineWidth', 1.5, 'DisplayName', 'Degradáció');
+    plot(val_contracts, val_over,      'r-', 'LineWidth', 1.5, 'DisplayName', 'Overrun');
+    plot(val_contracts, val_contractc, 'm-', 'LineWidth', 1.5, 'DisplayName', 'Contract fix díj');
+    xlabel('Lekötött teljesítmény [kW]');
+    ylabel('Költség [HUF]');
+    title('Költségkomponensek');
+    legend('Location', 'best');
+
+    subplot(2,2,3); hold on; grid on;
+    plot(val_contracts, val_maxpeak,  'b-o', 'LineWidth', 1.5, 'DisplayName', 'Max napi peak');
+    plot(val_contracts, val_p95peak,  'c-^', 'LineWidth', 1.5, 'DisplayName', '95% peak');
+    plot(val_contracts, val_meanpeak, 'k-s', 'LineWidth', 1.5, 'DisplayName', 'Átlagos napi peak');
+    xline(best_detail.contract_kW, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Optimális contract');
+    xlabel('Lekötött teljesítmény [kW]');
+    ylabel('Peak [kW]');
+    title('Peak statisztikák');
+    legend('Location', 'best');
+
+    subplot(2,2,4); yyaxis left; hold on; grid on;
+    bar(val_contracts, val_runtime, 'FaceColor', [0.2 0.6 0.8], 'DisplayName', 'Futásidő');
+    ylabel('Futásidő [s]');
+
+    yyaxis right;
+    plot(val_contracts, val_overdays, 'r-o', 'LineWidth', 1.5, 'DisplayName', 'Túllépéses napok');
+    ylabel('Napok száma');
+    xlabel('Lekötött teljesítmény [kW]');
+    title('Futásidő és túllépéses napok');
+    legend('Location', 'best');
+end
+
+function local_plot_best_day(best_detail, pars)
+
+    if isempty(best_detail.final_day.plan)
+        return;
+    end
+
+    plot_plan  = best_detail.final_day.plan;
+    plot_res   = best_detail.final_day.res;
+    plot_load  = best_detail.final_day.load;
+    plot_pv    = best_detail.final_day.pv;
+    plot_price = best_detail.final_day.price;
+    soc_start_of_final_day = best_detail.final_day.soc_start;
+
+    time_hours = linspace(0, 24, length(plot_load));
+    dt_plot = 24 / length(plot_load);
+
+    figure('Name', sprintf('Legjobb contract napi részlet (%.0f kW)', best_detail.contract_kW), ...
+           'Position', [100, 100, 1250, 950]);
+
+    subplot(3,1,1); hold on; grid on;
+    title(sprintf('Teljesítményáramlások és tervezett limit - contract = %.0f kW', best_detail.contract_kW), 'FontSize', 12);
+
+    P_pv_ac = plot_pv * pars.inv_eta;
+    P_pv_to_load = min(P_pv_ac, plot_load);
+    residual_after_pv = max(plot_load - P_pv_to_load, 0);
+
+    P_bess_to_load = min(plot_res.E_discharged / dt_plot, residual_after_pv);
+    P_grid_to_load = max(plot_load - P_pv_to_load - P_bess_to_load, 0);
+    P_bess_charge = plot_res.E_stored / dt_plot;
+
+    h = area(time_hours, [P_pv_to_load', P_bess_to_load', P_grid_to_load']);
+    h(1).FaceColor = [0.4660 0.6740 0.1880]; h(1).DisplayName = 'PV -> fogyasztás';
+    h(2).FaceColor = [0.0000 0.4470 0.7410]; h(2).DisplayName = 'BESS -> fogyasztás';
+    h(3).FaceColor = [0.6350 0.0780 0.1840]; h(3).DisplayName = 'Grid -> fogyasztás';
+
+    plot(time_hours, P_bess_charge, 'Color', [0.9290 0.6940 0.1250], ...
+        'LineWidth', 2, 'DisplayName', 'BESS töltés');
+    plot(time_hours, plot_load, 'k-', 'LineWidth', 1.2, 'DisplayName', 'Összes fogyasztás');
+
+    yline(plot_plan.P_limit, 'k--', 'LineWidth', 2, 'DisplayName', 'Tervezett peak limit');
+    yline(plot_plan.P_limit_ref, 'r:', 'LineWidth', 1.5, 'DisplayName', 'Referencia contract');
+
+    ylabel('Teljesítmény [kW]');
+    legend('Location', 'northeastoutside');
+
+    subplot(3,1,2); hold on; grid on;
+    title('Vételi ár és töltési/kisütési terv', 'FontSize', 12);
+
+    plot(time_hours, plot_price.buy_huf, 'k', 'LineWidth', 1.5, ...
+        'DisplayName', 'Vételi ár (HUF/kWh)');
+
+    buy_idx = find(plot_plan.trade_buy_mask);
+    if ~isempty(buy_idx)
+        plot(time_hours(buy_idx), plot_price.buy_huf(buy_idx), 'g.', ...
+            'MarkerSize', 15, 'DisplayName', 'Tervezett töltési ablak');
+    end
+
+    sell_idx = find(plot_plan.trade_sell_mask);
+    if ~isempty(sell_idx)
+        plot(time_hours(sell_idx), plot_price.buy_huf(sell_idx), 'r.', ...
+            'MarkerSize', 15, 'DisplayName', 'Tervezett kisütési ablak');
+    end
+    ylabel('Ár [HUF/kWh]');
+    legend('Location', 'northwest');
+    xlim([0 24]);
+
+    subplot(3,1,3); yyaxis left; hold on; grid on;
+    E_net_kWh = plot_res.E_stored - plot_res.E_discharged;
+    SOC_approx = soc_start_of_final_day + cumsum(E_net_kWh) / pars.E_cap_nom;
+    plot(time_hours, SOC_approx * 100, 'b', 'LineWidth', 2, 'DisplayName', 'SOC (%)');
+    ylabel('SOC [%]');
+    ylim([0 100]);
+    yline(pars.SoC_min*100, 'r:', 'LineWidth', 1.5);
+    yline(pars.SoC_max*100, 'r:', 'LineWidth', 1.5);
+
+    yyaxis right;
+    bar(time_hours, plot_res.E_bess_dc / dt_plot, ...
+        'FaceColor', [0.3010 0.7450 0.9330], ...
+        'EdgeColor', 'none', 'BarWidth', 1, ...
+        'DisplayName', 'BESS DC teljesítmény');
+    ylabel('BESS P [kW]');
+    xlim([0 24]);
+    xlabel('Idő [óra]');
+    legend('Location', 'northeast');
+end
+
+function local_plot_best_period(best_detail)
+
+    days_axis = best_detail.days_axis(:).';
+
+    daily_peak_no_bess    = best_detail.daily_peak_no_bess(:).';
+    daily_peak_with_bess  = best_detail.daily_peak_with_bess(:).';
+    daily_energy_cost     = best_detail.daily_energy_cost(:).';
+    daily_deg_cost        = best_detail.daily_deg_cost(:).';
+    daily_overrun_cost    = best_detail.daily_overrun_cost(:).';
+    daily_total_cost      = best_detail.daily_total_cost(:).';
+    daily_bess_throughput = best_detail.daily_bess_throughput(:).';
+    daily_planned_peak    = best_detail.daily_planned_peak(:).';
+    daily_ref_contract    = best_detail.daily_ref_contract(:).';
+
+    % --- közös rendezés a napindex szerint ---
+    [days_axis, ord] = sort(days_axis);
+
+    daily_peak_no_bess    = daily_peak_no_bess(ord);
+    daily_peak_with_bess  = daily_peak_with_bess(ord);
+    daily_energy_cost     = daily_energy_cost(ord);
+    daily_deg_cost        = daily_deg_cost(ord);
+    daily_overrun_cost    = daily_overrun_cost(ord);
+    daily_total_cost      = daily_total_cost(ord);
+    daily_bess_throughput = daily_bess_throughput(ord);
+    daily_planned_peak    = daily_planned_peak(ord);
+    daily_ref_contract    = daily_ref_contract(ord);
+
+    figure('Name', sprintf('Validációs minta összesítő - optimális contract %.0f kW', best_detail.contract_kW), ...
+        'Position', [200, 120, 1300, 950]);
+
+    subplot(4,1,1); hold on; grid on;
+    plot(days_axis, daily_peak_no_bess,   'k--o', 'LineWidth', 1.2, 'DisplayName', 'Peak BESS nélkül');
+    plot(days_axis, daily_peak_with_bess, 'b-o',  'LineWidth', 1.5, 'DisplayName', 'Peak BESS-sel');
+    plot(days_axis, daily_planned_peak,   'm-o',  'LineWidth', 1.5, 'DisplayName', 'MILP tervezett P_{peak}');
+    yline(best_detail.contract_kW, 'r:', 'LineWidth', 1.5, ...
+        'DisplayName', sprintf('Optimális contract = %.0f kW', best_detail.contract_kW));
+    ylabel('Peak [kW]');
+    title('Validációs napok peak értékei');
+    legend('Location', 'best');
+
+    subplot(4,1,2); hold on; grid on;
+    plot(days_axis, daily_energy_cost,  'k-o', 'LineWidth', 1.2, 'DisplayName', 'Energia költség');
+    plot(days_axis, daily_deg_cost,     'b-o', 'LineWidth', 1.2, 'DisplayName', 'Degradáció');
+    plot(days_axis, daily_overrun_cost, 'r-o', 'LineWidth', 1.2, 'DisplayName', 'Overrun proxy');
+    plot(days_axis, daily_total_cost,   'm-o', 'LineWidth', 1.8, 'DisplayName', 'Összes napi költség');
+    ylabel('Költség [HUF]');
+    title('Validációs napok költségei');
+    legend('Location', 'best');
+
+    subplot(4,1,3); hold on; grid on;
+    bar(days_axis, daily_bess_throughput, 'FaceColor', [0.2 0.6 0.8], 'DisplayName', 'Napi BESS throughput');
+    ylabel('Energia [kWh]');
+    title('Validációs napok BESS igénybevétele');
+
+    subplot(4,1,4); hold on; grid on;
+    plot(days_axis, daily_planned_peak,   'm-o', 'LineWidth', 1.8, 'DisplayName', 'MILP napi optimális P');
+    plot(days_axis, daily_ref_contract,   'r--', 'LineWidth', 1.5, 'DisplayName', 'Fix contract');
+    plot(days_axis, daily_peak_with_bess, 'b:o', 'LineWidth', 1.5, 'DisplayName', 'Tényleges napi peak');
+    ylabel('Teljesítmény [kW]');
+    xlabel('Nap index');
+    title('Validációs napok: peak és contract');
+    legend('Location', 'best');
+end
+
+% =========================================================================
+% MILP (AZ EREDETI NÉV MARAD)
+% =========================================================================
+function plan = ems_day_ahead_planner_milp_peak_oriented( ...
+    P_load_f, P_pv_dc_f, Prices, pars, tariff, dt_h, current_day_of_month, P_12month_max)
+
+    N = length(P_load_f);
+
+    P_load_f  = P_load_f(:);
+    P_pv_dc_f = P_pv_dc_f(:);
+    buy_p_market = Prices.buy_huf(:);
+
+    eta_c_path = pars.inv_eta * pars.eta_c * pars.eta_cell;
+    eta_d_path = pars.eta_cell * pars.eta_d * pars.inv_eta;
+    cost_deg   = pars.degradation_cost_per_kWh;
+
+    if isfield(pars, 'SoC_initial')
+        SoC_start = pars.SoC_initial;
+    else
+        SoC_start = 0.5;
+    end
+
+    P_ch_max  = pars.P_chg_max;
+    P_dis_max = pars.P_dis_max;
+
+    dist_energy_fee  = tariff.distribution_energy_rate_huf_per_kWh;
+    trans_energy_fee = tariff.transmission_energy_rate_huf_per_kWh;
+    buy_p_total = buy_p_market + dist_energy_fee + trans_energy_fee;
+
+    P_contract = tariff.contracted_capacity_kW;
+    annual_contract_rate = tariff.annual_contracted_power_fee_huf_per_kW;
+    annual_base_fee      = tariff.annual_base_fee_huf;
+    annual_penalty_rate  = tariff.penalty_rate_huf_per_kW_year;
+    P_ratchet = tariff.ratchet_factor * P_12month_max;
+    P_limit_ref = max(P_contract, P_ratchet);
+
+    overrun_penalty_day = annual_penalty_rate / tariff.days_in_year;
+    peak_shadow_day = tariff.peak_shadow_weight * (annual_contract_rate / tariff.days_in_year);
+
+    P_pv_ac = min(P_pv_dc_f * pars.inv_eta, pars.P_inv_limit_ac);
+
+    qcheap = tariff.grid_charge_price_quantile;
+    cheap_threshold = quantile(buy_p_market, qcheap);
+    cheap_mask = buy_p_market <= cheap_threshold;
+
+    pv_surplus_mask = P_pv_ac > P_load_f;
+    noncheap_charge_penalty = tariff.noncheap_charge_penalty_huf_per_kWh * ...
+                              (~cheap_mask & ~pv_surplus_mask);
+
+    hours = mod((0:N-1)' * dt_h, 24);
+    peak_hours = tariff.peak_hours;
+    peak_window_mask = hours >= peak_hours(1) & hours < peak_hours(2);
+
+    soc_min_vec = pars.SoC_min * ones(N,1);
+    soc_min_vec(peak_window_mask) = max(pars.SoC_min, tariff.peak_reserve_soc);
+
+    iGrid = 1:N;
+    iCh   = N+1:2*N;
+    iDis  = 2*N+1:3*N;
+    iSoc  = 3*N+1:4*N;
+    iMode = 4*N+1:5*N;
+    iCurt = 5*N+1:6*N;
+    iPeak = 6*N+1;
+    iOver = 6*N+2;
+    nVars = 6*N + 2;
+
+    f = zeros(nVars, 1);
+    f(iGrid) = buy_p_total * dt_h;
+    f(iCh)   = cost_deg * dt_h + noncheap_charge_penalty * dt_h;
+    f(iDis)  = cost_deg * dt_h;
+    f(iCurt) = tariff.curtailment_penalty_huf_per_kWh * dt_h;
+    f(iPeak) = peak_shadow_day;
+    f(iOver) = overrun_penalty_day;
+
+    Aeq_energy = zeros(N, nVars);
+    beq_energy = P_load_f - P_pv_ac;
+
+    for t = 1:N
+        Aeq_energy(t, iGrid(t)) =  1;
+        Aeq_energy(t, iDis(t))  =  1;
+        Aeq_energy(t, iCh(t))   = -1;
+        Aeq_energy(t, iCurt(t)) = -1;
+    end
+
+    Aeq_soc = zeros(N, nVars);
+    beq_soc = zeros(N, 1);
+
+    Aeq_soc(1, iSoc(1)) = 1;
+    beq_soc(1) = SoC_start;
+
+    alpha_ch = (eta_c_path * dt_h) / pars.E_cap_nom;
+    beta_dis = (dt_h / eta_d_path) / pars.E_cap_nom;
+
+    for t = 2:N
+        Aeq_soc(t, iSoc(t))   =  1;
+        Aeq_soc(t, iSoc(t-1)) = -1;
+        Aeq_soc(t, iCh(t-1))  = -alpha_ch;
+        Aeq_soc(t, iDis(t-1)) =  beta_dis;
+    end
+
+    Aeq = [Aeq_energy; Aeq_soc];
+    beq = [beq_energy; beq_soc];
+
+    A = [];
+    b = [];
+
+    A_bin = zeros(2*N, nVars);
+    b_bin = zeros(2*N, 1);
+
+    for t = 1:N
+        A_bin(t, iCh(t))   = 1;
+        A_bin(t, iMode(t)) = -P_ch_max;
+        b_bin(t) = 0;
+
+        A_bin(N+t, iDis(t))  = 1;
+        A_bin(N+t, iMode(t)) = P_dis_max;
+        b_bin(N+t) = P_dis_max;
+    end
+
+    A = [A; A_bin];
+    b = [b; b_bin];
+
+    A_curt = zeros(N, nVars);
+    b_curt = zeros(N, 1);
+    for t = 1:N
+        A_curt(t, iCurt(t)) = 1;
+        b_curt(t) = P_pv_ac(t);
+    end
+    A = [A; A_curt];
+    b = [b; b_curt];
+
+    A_peak = zeros(N, nVars);
+    b_peak = zeros(N, 1);
+    for t = 1:N
+        A_peak(t, iGrid(t)) = 1;
+        A_peak(t, iPeak)    = -1;
+    end
+    A = [A; A_peak];
+    b = [b; b_peak];
+
+    row_over = zeros(1, nVars);
+    row_over(iPeak) = 1;
+    row_over(iOver) = -1;
+    A = [A; row_over];
+    b = [b; P_limit_ref];
+
+    lb = zeros(nVars, 1);
+    ub = inf(nVars, 1);
+
+    lb(iSoc) = soc_min_vec;
+    ub(iSoc) = pars.SoC_max;
+
+    lb(iMode) = 0;
+    ub(iMode) = 1;
+
+    intcon = iMode;
+
+    options = optimoptions('intlinprog', ...
+        'Display', 'off', ...
+        'MaxTime', 20, ...
+        'RelativeGapTolerance', 0.01, ...
+        'IntegerPreprocess', 'advanced', ...
+        'RootLPAlgorithm', 'dual-simplex');
+
+    [x, fval, exitflag] = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub, options);
+
+    plan = struct();
+
+    if isempty(x) || exitflag <= 0
+        fallback_peak = max(max(P_load_f - P_pv_ac, 0), P_limit_ref);
+
+        plan.P_limit = fallback_peak;
+        plan.P_limit_ref = P_limit_ref;
+        plan.P_over_contract = max(0, fallback_peak - P_limit_ref);
+
+        plan.trade_buy_mask  = false(1, N);
+        plan.trade_sell_mask = false(1, N);
+
+        plan.P_grid_plan = max(P_load_f - P_pv_ac, 0);
+        plan.P_ch_plan   = zeros(N, 1);
+        plan.P_dis_plan  = zeros(N, 1);
+        plan.P_curt_plan = max(P_pv_ac - P_load_f, 0);
+        plan.SoC_plan    = SoC_start * ones(N, 1);
+
+        plan.objective_value = inf;
+        plan.exitflag = exitflag;
+
+        plan.economics.energy_cost_market      = sum(buy_p_market .* plan.P_grid_plan) * dt_h;
+        plan.economics.energy_cost_network     = sum((dist_energy_fee + trans_energy_fee) .* plan.P_grid_plan) * dt_h;
+        plan.economics.energy_cost_total       = plan.economics.energy_cost_market + plan.economics.energy_cost_network;
+        plan.economics.degradation_cost        = 0;
+        plan.economics.overrun_cost_proxy      = overrun_penalty_day * plan.P_over_contract;
+        plan.economics.peak_shadow_cost        = peak_shadow_day * plan.P_limit;
+        plan.economics.net_cost_operational    = inf;
+        plan.economics.contract_charge_annual  = annual_contract_rate * P_contract;
+        plan.economics.base_fee_annual         = annual_base_fee;
+        plan.economics.P_contract              = P_contract;
+        plan.economics.P_limit_ref             = P_limit_ref;
+        return;
+    end
+
+    P_grid = x(iGrid);
+    P_ch   = x(iCh);
+    P_dis  = x(iDis);
+    SoC    = x(iSoc);
+    P_curt = x(iCurt);
+    P_peak = x(iPeak);
+    P_over = x(iOver);
+
+    plan.P_limit = P_peak;
+    plan.P_limit_ref = P_limit_ref;
+    plan.P_over_contract = P_over;
+
+    plan.trade_buy_mask  = (P_ch  > 1e-3).';
+    plan.trade_sell_mask = (P_dis > 1e-3).';
+
+    plan.P_grid_plan = P_grid;
+    plan.P_ch_plan   = P_ch;
+    plan.P_dis_plan  = P_dis;
+    plan.P_curt_plan = P_curt;
+    plan.SoC_plan    = SoC;
+
+    plan.objective_value = fval;
+    plan.exitflag = exitflag;
+
+    energy_cost_market  = sum(buy_p_market .* P_grid) * dt_h;
+    energy_cost_network = sum((dist_energy_fee + trans_energy_fee) .* P_grid) * dt_h;
+    degradation_cost    = sum(cost_deg .* (P_ch + P_dis)) * dt_h;
+    overrun_cost_proxy  = overrun_penalty_day * P_over;
+    peak_shadow_cost    = peak_shadow_day * P_peak;
+
+    plan.economics.energy_cost_market      = energy_cost_market;
+    plan.economics.energy_cost_network     = energy_cost_network;
+    plan.economics.energy_cost_total       = energy_cost_market + energy_cost_network;
+    plan.economics.degradation_cost        = degradation_cost;
+    plan.economics.overrun_cost_proxy      = overrun_cost_proxy;
+    plan.economics.peak_shadow_cost        = peak_shadow_cost;
+    plan.economics.net_cost_operational    = fval;
+    plan.economics.contract_charge_annual  = annual_contract_rate * P_contract;
+    plan.economics.base_fee_annual         = annual_base_fee;
+    plan.economics.P_contract              = P_contract;
+    plan.economics.P_limit_ref             = P_limit_ref;
+end
+
+% =========================================================================
+% ALAP BESS PARAMÉTEREK
+% =========================================================================
+function pars = base_battery_pars_nonideal_(E_cap_nom, Pmax)
+
+    pars = struct();
+
+    pars.E_cap_nom        = E_cap_nom;
+    pars.P_rated          = Pmax;
+    pars.C_chg_abs_max    = Pmax / max(E_cap_nom, eps);
+    pars.C_dis_abs_max    = pars.C_chg_abs_max;
+    pars.P_chg_max        = Pmax;
+    pars.P_dis_max        = Pmax;
+
+    pars.SoC_min          = 0.20;
+    pars.SoC_max          = 0.80;
+    pars.SoC_init         = 0.50;
+
+    pars.eta_c            = 0.975;
+    pars.eta_d            = 0.975;
+    pars.k_ohm            = 0.020;
+
+    pars.self_dis_per_h   = 2e-5;
+    pars.cap_floor_frac   = 0.70;
+
+    pars.inv_eta          = 0.97;
+    pars.eta_c            = 0.98;
+    pars.eta_d            = 0.98;
+
+    pars.eta_cell         = 0.985;
+    pars.eta_cell_min     = 0.90;
+
+    pars.k_eta_C2         = 0.02;
+    pars.k_eta_soc        = 0.02;
+    pars.soc_ref          = 0.5;
+
+    pars.R_growth_time_k  = 0.50;
+    pars.R_growth_cap_k   = 1.00;
+
+    C_abs                 = Pmax / max(E_cap_nom, eps);
+    C_ref                 = min(C_abs, 0.5);
+    pars.C_rec_chg        = C_ref;
+    pars.C_rec_dis        = C_ref;
+end
+
+% =========================================================================
+% REALTIME VÉGREHAJTÓ
+% =========================================================================
+function P_bess_dc_req = ems_realtime_decision_dc(P_pv_dc, P_load_actual, plan, pars)
+
+    N = length(P_pv_dc);
+    P_bess_dc_req = zeros(1, N);
+
+    if ~isfield(plan, 'P_ch_plan') || ~isfield(plan, 'P_dis_plan')
+        P_bess_dc_req(plan.trade_buy_mask)  = -pars.P_chg_max * pars.inv_eta;
+        P_bess_dc_req(plan.trade_sell_mask) =  pars.P_dis_max / max(pars.inv_eta, eps);
+        return;
+    end
+
+    P_ch_ac  = plan.P_ch_plan(:).';
+    P_dis_ac = plan.P_dis_plan(:).';
+
+    P_bess_dc_req = (P_dis_ac ./ max(pars.inv_eta, eps)) - (P_ch_ac .* pars.inv_eta);
+
+    P_bess_dc_req = min(P_bess_dc_req,  pars.P_dis_max);
+    P_bess_dc_req = max(P_bess_dc_req, -pars.P_chg_max);
+
+    P_bess_dc_req(abs(P_bess_dc_req) < 1e-6) = 0;
+end
+
+% =========================================================================
+% SEGÉDFÜGGVÉNYEK: NORMALIZÁLÁS, KMEANS
+% =========================================================================
+function Z = local_zscore(X)
+    mu = mean(X, 1);
+    sig = std(X, 0, 1);
+    sig(sig < 1e-12) = 1;
+    Z = (X - mu) ./ sig;
+end
+
+function [idx, centers] = local_kmeans_basic(X, K, maxIter)
+% Egyszerű saját kmeans, hogy ne kelljen külön toolbox.
+
+    [N, D] = size(X);
+
+    rng(42);
+    perm = randperm(N, K);
+    centers = X(perm, :);
+
+    idx = ones(N,1);
+
+    for it = 1:maxIter
+        % hozzárendelés
+        dist = zeros(N, K);
+        for k = 1:K
+            diff = X - centers(k,:);
+            dist(:,k) = sum(diff.^2, 2);
+        end
+        [~, idx_new] = min(dist, [], 2);
+
+        if all(idx_new == idx) && it > 1
+            break;
+        end
+        idx = idx_new;
+
+        % centroid frissítés
+        new_centers = zeros(K, D);
+        for k = 1:K
+            members = X(idx == k, :);
+            if isempty(members)
+                new_centers(k,:) = X(randi(N), :);
+            else
+                new_centers(k,:) = mean(members, 1);
+            end
+        end
+
+        if max(abs(new_centers(:) - centers(:))) < 1e-8
+            centers = new_centers;
+            break;
+        end
+
+        centers = new_centers;
+    end
+end
+
+function stats = analyze_daily_peak_distribution(daily_peak_no_bess, P_bess_max)
+% Napi no-BESS peak eloszlás elemzése a contract keresési tartomány szűkítéséhez
+
+    x = daily_peak_no_bess(:);
+
+    stats = struct();
+    stats.min  = min(x);
+    stats.p50  = prctile(x, 50);
+    stats.p75  = prctile(x, 75);
+    stats.p80  = prctile(x, 80);
+    stats.p85  = prctile(x, 85);
+    stats.p90  = prctile(x, 90);
+    stats.p95  = prctile(x, 95);
+    stats.p97  = prctile(x, 97);
+    stats.p99  = prctile(x, 99);
+    stats.max  = max(x);
+    stats.mean = mean(x);
+    stats.std  = std(x);
+
+    % Egyszerű, konzervatív keresési intervallum
+    search_low  = max(25, stats.p75 - 0.25 * P_bess_max);
+    search_high = stats.p99;
+
+    stats.search_low_kW  = 10 * floor(search_low / 10);
+    stats.search_high_kW = 10 * ceil(search_high / 10);
+
+    if stats.search_high_kW <= stats.search_low_kW
+        stats.search_high_kW = stats.search_low_kW + 20;
+    end
+
+    stats.initial_guess_kW = 10 * round(stats.p90 / 10);
+end
+
+function local_plot_representative_day_selection(features, rep_set)
+
+    X = features.z;
+
+    figure('Name', 'Proxy reprezentáns napok kiválasztása', 'Position', [140, 140, 1000, 700]);
+    hold on; grid on;
+
+    scatter(X(:,7), X(:,8), 40, rep_set.cluster_id, 'filled', 'DisplayName', 'Összes nap');
+    scatter(X(rep_set.typical_day_indices,7), X(rep_set.typical_day_indices,8), ...
+        120, 'kd', 'LineWidth', 2, 'DisplayName', 'Tipikus napok');
+    scatter(X(rep_set.extreme_day_indices,7), X(rep_set.extreme_day_indices,8), ...
+        150, 'rs', 'LineWidth', 2, 'DisplayName', 'Extrém napok');
+
+    xlabel('z(no-BESS napi peak)');
+    ylabel('z(esti no-BESS peak)');
+    title('7 napos súlyozott proxy halmaz');
+    legend('Location', 'best');
+end
+
+function search_log = local_local_contract_search_weighted( ...
+    start_guess, bounds_kW, coarse_step, fine_step, ...
+    day_cache, rep_set, pars)
+
+    history = struct('contract_kW', {}, 'proxy_cost_huf', {}, 'stage', {});
+
+    current = start_guess;
+    Jc = local_proxy_cost_for_contract_weighted(current, day_cache, rep_set, pars);
+    history(end+1) = local_make_history_row(current, Jc, "coarse");
+
+    left  = max(bounds_kW(1), current - coarse_step);
+    right = min(bounds_kW(2), current + coarse_step);
+
+    Jl = local_proxy_cost_for_contract_weighted(left, day_cache, rep_set, pars);
+    Jr = local_proxy_cost_for_contract_weighted(right, day_cache, rep_set, pars);
+
+    history(end+1) = local_make_history_row(left,  Jl, "coarse");
+    history(end+1) = local_make_history_row(right, Jr, "coarse");
+
+    if Jl < Jc && Jl <= Jr
+        direction = -1;
+    elseif Jr < Jc && Jr < Jl
+        direction = +1;
+    else
+        direction = 0;
+    end
+
+    best_coarse_contract = current;
+    best_coarse_cost = Jc;
+
+    if direction ~= 0
+        while true
+            next_c = current + direction * coarse_step;
+            if next_c < bounds_kW(1) || next_c > bounds_kW(2)
+                break;
+            end
+
+            Jnext = local_proxy_cost_for_contract_weighted(next_c, day_cache, rep_set, pars);
+            history(end+1) = local_make_history_row(next_c, Jnext, "coarse");
+
+            if Jnext < best_coarse_cost
+                best_coarse_cost = Jnext;
+                best_coarse_contract = next_c;
+                current = next_c;
+            else
+                break;
+            end
+        end
+    end
+
+    fine_candidates = (best_coarse_contract - coarse_step):fine_step:(best_coarse_contract + coarse_step);
+    fine_candidates = fine_candidates( ...
+        fine_candidates >= bounds_kW(1) & fine_candidates <= bounds_kW(2));
+    fine_candidates = unique(fine_candidates);
+
+    best_fine_contract = best_coarse_contract;
+    best_fine_cost = inf;
+
+    for c = fine_candidates
+        idx_existing = find([history.contract_kW] == c, 1, 'last');
+        if isempty(idx_existing)
+            Jc = local_proxy_cost_for_contract_weighted(c, day_cache, rep_set, pars);
+            history(end+1) = local_make_history_row(c, Jc, "fine");
+        else
+            Jc = history(idx_existing).proxy_cost_huf;
+        end
+
+        if Jc < best_fine_cost
+            best_fine_cost = Jc;
+            best_fine_contract = c;
+        end
+    end
+
+    search_log = struct();
+    search_log.history = history;
+    search_log.best_proxy_contract_kW = best_fine_contract;
+    search_log.best_proxy_cost_huf = best_fine_cost;
+end
+
+function J_proxy = local_proxy_cost_for_contract_weighted(contract_kW, day_cache, rep_set, pars_in)
+% Proxy költség 7 reprezentáns napon, súlyozással.
+% Ez marad a gyors proxy kereséshez.
+
+    pars = pars_in;
+    tariff = create_hungarian_mv_tariff_structure();
+    tariff.contracted_capacity_kW = contract_kW;
+
+    rep_idx = rep_set.all_day_indices;
+    rep_w   = rep_set.weights(:);
+
+    period_energy_cost  = 0;
+    period_deg_cost     = 0;
+    period_overrun_cost = 0;
+    period_peak_shadow  = 0;
+
+    soc_state = 0.5;
+
+    for kk = 1:numel(rep_idx)
+        ii = rep_idx(kk);
+        w  = rep_w(kk);
+        dc = day_cache(ii);
+
+        pars.SoC_initial = soc_state;
+        current_day_of_month = mod(dc.abs_day-1, 30) + 1;
+
+        plan_full = ems_day_ahead_planner_milp( ...
+            dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, pars, tariff, dc.dt_h, ...
+            current_day_of_month, 0);
+
+        nDay = length(dc.P_load_actual);
+        P_grid_plan_today = plan_full.P_grid_plan(1:nDay);
+        SoC_plan_today    = plan_full.SoC_plan(1:nDay);
+        P_peak_today      = max(P_grid_plan_today);
+
+        buy_today = dc.Prices_today.buy_huf(:);
+        buy_total = buy_today + tariff.distribution_energy_rate_huf_per_kWh + ...
+                               tariff.transmission_energy_rate_huf_per_kWh;
+
+        P_ch_today  = plan_full.P_ch_plan(1:nDay);
+        P_dis_today = plan_full.P_dis_plan(1:nDay);
+
+        energy_cost = sum(buy_total .* P_grid_plan_today) * dc.dt_h;
+        deg_cost    = sum(pars.degradation_cost_per_kWh .* (P_ch_today + P_dis_today)) * dc.dt_h;
+
+        overrun = max(0, P_peak_today - contract_kW);
+        overrun_cost = (tariff.penalty_rate_huf_per_kW_year / tariff.days_in_year) * overrun;
+
+        peak_shadow_cost = tariff.peak_shadow_weight * ...
+                           (tariff.annual_contracted_power_fee_huf_per_kW / tariff.days_in_year) * P_peak_today;
+
+        period_energy_cost  = period_energy_cost  + w * energy_cost;
+        period_deg_cost     = period_deg_cost     + w * deg_cost;
+        period_overrun_cost = period_overrun_cost + w * overrun_cost;
+        period_peak_shadow  = period_peak_shadow  + w * peak_shadow_cost;
+
+        soc_state = SoC_plan_today(end);
+        soc_state = min(max(soc_state, pars.SoC_min), pars.SoC_max);
+    end
+
+    period_days = numel(day_cache);
+
+    period_energy_cost  = period_energy_cost  * period_days;
+    period_deg_cost     = period_deg_cost     * period_days;
+    period_overrun_cost = period_overrun_cost * period_days;
+    period_peak_shadow  = period_peak_shadow  * period_days;
+
+    contract_cost_period = (period_days / tariff.days_in_year) * ...
+        (tariff.annual_contracted_power_fee_huf_per_kW * contract_kW + tariff.annual_base_fee_huf);
+
+    J_proxy = period_energy_cost + period_deg_cost + ...
+              period_overrun_cost + period_peak_shadow + ...
+              contract_cost_period;
+end
