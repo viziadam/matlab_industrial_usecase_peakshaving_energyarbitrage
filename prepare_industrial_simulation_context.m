@@ -111,7 +111,7 @@ function industrialCtx = prepare_industrial_simulation_context(data, cfg)
     fprintf('Validation days: %d\n', numel(rep_set_valid.validation_day_indices));
 end
 
-ffunction day_cache = build_industrial_day_cache_from_framework(data, cfg)
+function day_cache = build_industrial_day_cache_from_framework(data, cfg)
 % BUILD_INDUSTRIAL_DAY_CACHE_FROM_FRAMEWORK
 %
 % data.days -> day_cache átalakítás.
@@ -536,4 +536,85 @@ function rep_set = local_select_validation_days_pattern_based(features, day_cach
     rep_set.cluster_sample_counts = cluster_sample_counts;
     rep_set.extreme_day_indices = extreme_day_indices;
     rep_set.validation_day_indices = sort(validation_days(:).');
+end
+
+% =========================================================================
+% SEGÉD NORMALIZÁLÁS ÉS KMEANS
+% =========================================================================
+function Z = local_zscore(X)
+
+    mu = mean(X, 1);
+    sig = std(X, 0, 1);
+
+    if any(sig < 1e-12)
+        zeroVarCols = find(sig < 1e-12);
+        error('Nulla vagy közel nulla szórású feature oszlop(ok): %s', ...
+            mat2str(zeroVarCols));
+    end
+
+    Z = (X - mu) ./ sig;
+end
+
+
+function [idx, centers] = local_kmeans_basic(X, K, maxIter)
+
+    if nargin < 3
+        error('local_kmeans_basic: hiányzó maxIter bemenet.');
+    end
+
+    [N, D] = size(X);
+
+    if K <= 0 || K > N
+        error('Érvénytelen klaszterszám. K = %d, N = %d.', K, N);
+    end
+
+    if maxIter <= 0
+        error('maxIter legyen pozitív.');
+    end
+
+    rng(42);
+
+    perm = randperm(N, K);
+    centers = X(perm, :);
+
+    idx = ones(N, 1);
+
+    for it = 1:maxIter
+
+        dist = zeros(N, K);
+
+        for k = 1:K
+            diff = X - centers(k, :);
+            dist(:, k) = sum(diff.^2, 2);
+        end
+
+        [~, idx_new] = min(dist, [], 2);
+
+        if all(idx_new == idx) && it > 1
+            break;
+        end
+
+        idx = idx_new;
+
+        new_centers = zeros(K, D);
+
+        for k = 1:K
+
+            members = X(idx == k, :);
+
+            if isempty(members)
+                error('Üres klaszter keletkezett a k-means során. K = %d, iteráció = %d.', ...
+                    K, it);
+            end
+
+            new_centers(k, :) = mean(members, 1);
+        end
+
+        if max(abs(new_centers(:) - centers(:))) < 1e-8
+            centers = new_centers;
+            break;
+        end
+
+        centers = new_centers;
+    end
 end

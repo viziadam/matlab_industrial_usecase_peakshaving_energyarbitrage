@@ -120,12 +120,22 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 
             runtime_s = toc(tCandidate);
 
-            warning('Candidate %d failed: %s', c, ME.message);
-
             DB.candidateTable.wasSimulated(c) = false;
             DB.candidateTable.hasError(c) = true;
             DB.candidateTable.errorMessage(c) = string(ME.message);
             DB.candidateTable.runtime_s(c) = runtime_s;
+
+            if isfield(cfg, 'sim') && ...
+               isfield(cfg.sim, 'saveAfterEachCandidate') && ...
+               cfg.sim.saveAfterEachCandidate
+
+                save_candidates_database(DB, cfg);
+            end
+
+            fprintf('\nCandidate %d failed after %.2f s.\n', c, runtime_s);
+            fprintf('Error message:\n%s\n', ME.message);
+
+            rethrow(ME);
         end
 
         % -----------------------------------------------------------------

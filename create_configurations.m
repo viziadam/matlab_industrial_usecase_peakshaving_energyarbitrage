@@ -77,7 +77,7 @@ function cfg = create_configurations(basePath)
     % Itt már nem DCAC_ratio x BESS_PV_ratio az alap candidate tér,
     % mert PV és inverter fix. A candidate-ek a BESS méretpárok.
 
-    cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
+    cfg.candidates.BESS_PV_ratio_vec = 0.5:0.5:6;
     cfg.candidates.bessDuration_h = 2;
 
     cfg.candidates.designFields = { ...

@@ -4,19 +4,26 @@ function data = build_data(cfg)
 % Ipari PV+BESS peak shaving + energia arbitrázs + contract optimum
 % feladathoz szükséges idősorok előkészítése.
 %
-% Kötelező kimeneti mezők:
+% Működés:
+%   - Load és Price a build_load_price_cache() kimenetéből jön.
+%   - Price már month-day alapon van a load napokra illesztve.
+%   - PV_A és PV_B külön build_pv_cache() hívással jön.
+%   - PV illesztés nem azonos év alapján történik, hanem hónap-nap alapján.
+%   - Load évekhez PV éveket rendelünk ciklikusan.
+%   - Ha adott load naphoz nincs PV_A/PV_B a hozzárendelt PV évben,
+%     akkor az a nap kimarad.
+%
+% Kimenet:
 %   data.days(d).date
 %   data.days(d).P_load_kW
 %   data.days(d).P_pv_A_dc_kW
 %   data.days(d).P_pv_B_dc_kW
 %   data.days(d).Price.buy_huf
+%   data.days(d).Price.sell_huf
 %   data.days(d).dt_h
-%
-% Nincs fallback. Ha a PV/load/price adatok nem szinkronizálhatók,
-% a függvény hibát dob.
 
     % =====================================================================
-    % 1) Kötelező cfg mezők
+    % 1) Kötelező cfg mezők ellenőrzése
     % =====================================================================
     requiredTopFields = {'pvA', 'pvB', 'pv', 'loadScale'};
 
@@ -53,17 +60,8 @@ function data = build_data(cfg)
     fprintf('Load scale factor: %.4f\n', cfg.loadScale);
 
     % =====================================================================
-    % 2) Load + price betöltése
+    % 2) Load + Price betöltése
     % =====================================================================
-    % Ez a run_single_bess_contract_search logikáját követi.
-    % Elvárt kimenet:
-    %   Load(d).date
-    %   Load(d).P_load_kW
-    %   Load(d).dt_h
-    %
-    %   Price(d).date
-    %   Price(d).buy_huf
-
     [Load, Price] = build_load_price_cache();
 
     if isempty(Load)
@@ -74,26 +72,30 @@ function data = build_data(cfg)
         error('Price cache is empty.');
     end
 
-    requiredLoadFields = {'date', 'P_load_kW', 'dt_h'};
+    if numel(Load) ~= numel(Price)
+        error('Load és Price elemszáma eltér.');
+    end
 
-    for k = 1:numel(requiredLoadFields)
-        if ~isfield(Load, requiredLoadFields{k})
+    requiredLoadFields = {'date', 'year', 'month', 'day', 'mmddKey', 'P_load_kW', 'dt_h'};
+
+    for f = 1:numel(requiredLoadFields)
+        if ~isfield(Load, requiredLoadFields{f})
             error('A Load struktúra nem tartalmazza ezt a mezőt: Load.%s', ...
-                requiredLoadFields{k});
+                requiredLoadFields{f});
         end
     end
 
-    requiredPriceFields = {'date', 'buy_huf'};
+    requiredPriceFields = {'date', 'sourceDate', 'mmddKey', 'buy_huf', 'sell_huf', 'dt_h'};
 
-    for k = 1:numel(requiredPriceFields)
-        if ~isfield(Price, requiredPriceFields{k})
+    for f = 1:numel(requiredPriceFields)
+        if ~isfield(Price, requiredPriceFields{f})
             error('A Price struktúra nem tartalmazza ezt a mezőt: Price.%s', ...
-                requiredPriceFields{k});
+                requiredPriceFields{f});
         end
     end
 
     % =====================================================================
-    % 3) PV_A és PV_B konkrét teljesítményű termelés
+    % 3) PV_A és PV_B betöltése
     % =====================================================================
     PV_A = build_pv_cache( ...
         cfg.pvA.tiltX, ...
@@ -115,145 +117,194 @@ function data = build_data(cfg)
         error('PV_B cache is empty.');
     end
 
-    requiredPvFields = {'date', 'Ppv', 'dt_h'};
+    requiredPVFields = {'date', 'year', 'month', 'day', 'mmddKey', 'Ppv', 'dt_h'};
 
-    for k = 1:numel(requiredPvFields)
+    for f = 1:numel(requiredPVFields)
 
-        f = requiredPvFields{k};
+        fieldName = requiredPVFields{f};
 
-        if ~isfield(PV_A, f)
-            error('A PV_A struktúra nem tartalmazza ezt a mezőt: PV_A.%s', f);
+        if ~isfield(PV_A, fieldName)
+            error('A PV_A struktúra nem tartalmazza ezt a mezőt: PV_A.%s', fieldName);
         end
 
-        if ~isfield(PV_B, f)
-            error('A PV_B struktúra nem tartalmazza ezt a mezőt: PV_B.%s', f);
+        if ~isfield(PV_B, fieldName)
+            error('A PV_B struktúra nem tartalmazza ezt a mezőt: PV_B.%s', fieldName);
         end
     end
 
     % =====================================================================
-    % 4) Dátum szerinti szinkronizálás
+    % 4) PV évek kiválasztása
     % =====================================================================
-    loadDates = [Load.date].';
-    priceDates = [Price.date].';
-    pvADates = [PV_A.date].';
-    pvBDates = [PV_B.date].';
+    pvYearsA = unique([PV_A.year]);
+    pvYearsB = unique([PV_B.year]);
 
-    [commonDates, idxLoad, idxPrice] = intersect(loadDates, priceDates);
-    [commonDates, idxCommon, idxPVA] = intersect(commonDates, pvADates);
+    pvYears = intersect(pvYearsA, pvYearsB);
 
-    idxLoad = idxLoad(idxCommon);
-    idxPrice = idxPrice(idxCommon);
-
-    [commonDates, idxCommon, idxPVB] = intersect(commonDates, pvBDates);
-
-    idxLoad = idxLoad(idxCommon);
-    idxPrice = idxPrice(idxCommon);
-    idxPVA = idxPVA(idxCommon);
-
-    if isempty(commonDates)
-        error('No common dates found between Load, Price, PV_A and PV_B.');
+    if isempty(pvYears)
+        error('Nincs közös PV év PV_A és PV_B között.');
     end
 
-    nDays = numel(commonDates);
+    pvYears = sort(pvYears);
 
-    fprintf('\nSynchronization by exact dates:\n');
-    fprintf('  Load days:   %d\n', numel(Load));
-    fprintf('  Price days:  %d\n', numel(Price));
-    fprintf('  PV_A days:   %d\n', numel(PV_A));
-    fprintf('  PV_B days:   %d\n', numel(PV_B));
-    fprintf('  Common days: %d\n', nDays);
-    fprintf('  First common date: %s\n', datestr(commonDates(1), 'yyyy-mm-dd'));
-    fprintf('  Last common date:  %s\n', datestr(commonDates(end), 'yyyy-mm-dd'));
+    fprintf('\nPV évek, amelyekből month-day sablon használható:\n');
+    disp(pvYears);
 
     % =====================================================================
-    % 5) Napi struktúrák feltöltése
+    % 5) PV index map építése year + month-day alapján
+    % =====================================================================
+    pvAMap = local_build_pv_year_mmdd_map(PV_A, 'PV_A');
+    pvBMap = local_build_pv_year_mmdd_map(PV_B, 'PV_B');
+
+    % =====================================================================
+    % 6) Load évekhez PV évek rendelése ciklikusan
+    % =====================================================================
+    loadYears = unique([Load.year]);
+    loadYears = sort(loadYears);
+
+    yearMap = containers.Map('KeyType', 'double', 'ValueType', 'double');
+
+    for i = 1:numel(loadYears)
+
+        pvYearIdx = mod(i - 1, numel(pvYears)) + 1;
+        yearMap(loadYears(i)) = pvYears(pvYearIdx);
+
+        fprintf('Load év %d -> PV év %d\n', loadYears(i), pvYears(pvYearIdx));
+    end
+
+    % =====================================================================
+    % 7) Napi data.days felépítése
     % =====================================================================
     emptyDay = struct( ...
         'date', NaT, ...
+        'loadYear', [], ...
+        'pvSourceYear', [], ...
+        'pvSourceDateA', NaT, ...
+        'pvSourceDateB', NaT, ...
+        'priceSourceDate', NaT, ...
         'P_load_kW', [], ...
         'P_pv_A_dc_kW', [], ...
         'P_pv_B_dc_kW', [], ...
-        'Price', struct('buy_huf', []), ...
+        'Price', struct('buy_huf', [], 'sell_huf', []), ...
         'dt_h', []);
 
     data = struct();
-    data.days = repmat(emptyDay, 1, nDays);
+    data.days = repmat(emptyDay, 1, numel(Load));
 
-    for d = 1:nDays
+    outIdx = 0;
+    skippedMissingPV = 0;
+    skippedVectorMismatch = 0;
 
-        L = Load(idxLoad(d));
-        PA = PV_A(idxPVA(d));
-        PB = PV_B(idxPVB(d));
-        PR = Price(idxPrice(d));
+    for i = 1:numel(Load)
 
-        P_load_kW = cfg.loadScale .* L.P_load_kW(:).';
+        if Load(i).date ~= Price(i).date
+            error('Load és Price dátum eltér az indexnél: %d', i);
+        end
+
+        if Load(i).mmddKey ~= Price(i).mmddKey
+            error('Load és Price mmddKey eltér az indexnél: %d', i);
+        end
+
+        loadYear = Load(i).year;
+        pvYear = yearMap(loadYear);
+
+        pvKey = local_year_mmdd_key(pvYear, Load(i).mmddKey);
+
+        if ~pvAMap.isKey(pvKey) || ~pvBMap.isKey(pvKey)
+            skippedMissingPV = skippedMissingPV + 1;
+            continue;
+        end
+
+        idxA = pvAMap(pvKey);
+        idxB = pvBMap(pvKey);
+
+        PA = PV_A(idxA);
+        PB = PV_B(idxB);
+
+        P_load_kW = cfg.loadScale .* Load(i).P_load_kW(:).';
 
         P_pv_A_dc_kW = PA.Ppv(:).' / 1000;
         P_pv_B_dc_kW = PB.Ppv(:).' / 1000;
 
-        dt_load_h = L.dt_h;
-        dt_pv_A_h = PA.dt_h;
-        dt_pv_B_h = PB.dt_h;
+        buy_huf = Price(i).buy_huf(:).';
+        sell_huf = Price(i).sell_huf(:).';
 
-        if abs(dt_pv_A_h - dt_load_h) > 1e-12
+        dt_load_h = Load(i).dt_h;
+
+        if abs(Price(i).dt_h - dt_load_h) > 1e-12
+            error('Load és Price dt_h eltér. Load date: %s', ...
+                datestr(Load(i).date, 'yyyy-mm-dd'));
+        end
+
+        if abs(PA.dt_h - dt_load_h) > 1e-12
             P_pv_A_dc_kW = local_resample_power_to_target_dt( ...
-                P_pv_A_dc_kW, ...
-                dt_pv_A_h, ...
-                dt_load_h);
+                P_pv_A_dc_kW, PA.dt_h, dt_load_h);
         end
 
-        if abs(dt_pv_B_h - dt_load_h) > 1e-12
+        if abs(PB.dt_h - dt_load_h) > 1e-12
             P_pv_B_dc_kW = local_resample_power_to_target_dt( ...
-                P_pv_B_dc_kW, ...
-                dt_pv_B_h, ...
-                dt_load_h);
+                P_pv_B_dc_kW, PB.dt_h, dt_load_h);
         end
 
-        buy_huf = PR.buy_huf(:).';
+        nT = numel(P_load_kW);
 
-        if numel(P_pv_A_dc_kW) ~= numel(P_load_kW)
-            error('PV_A és load vektorhossz eltérés dátumnál: %s', ...
-                datestr(commonDates(d), 'yyyy-mm-dd'));
+        if numel(P_pv_A_dc_kW) ~= nT || ...
+           numel(P_pv_B_dc_kW) ~= nT || ...
+           numel(buy_huf) ~= nT || ...
+           numel(sell_huf) ~= nT
+
+            skippedVectorMismatch = skippedVectorMismatch + 1;
+            continue;
         end
 
-        if numel(P_pv_B_dc_kW) ~= numel(P_load_kW)
-            error('PV_B és load vektorhossz eltérés dátumnál: %s', ...
-                datestr(commonDates(d), 'yyyy-mm-dd'));
-        end
+        outIdx = outIdx + 1;
 
-        if numel(buy_huf) ~= numel(P_load_kW)
-            error('Price és load vektorhossz eltérés dátumnál: %s', ...
-                datestr(commonDates(d), 'yyyy-mm-dd'));
-        end
+        data.days(outIdx).date = Load(i).date;
+        data.days(outIdx).loadYear = loadYear;
+        data.days(outIdx).pvSourceYear = pvYear;
+        data.days(outIdx).pvSourceDateA = PA.date;
+        data.days(outIdx).pvSourceDateB = PB.date;
+        data.days(outIdx).priceSourceDate = Price(i).sourceDate;
 
-        data.days(d).date = commonDates(d);
-        data.days(d).P_load_kW = P_load_kW;
-        data.days(d).P_pv_A_dc_kW = P_pv_A_dc_kW;
-        data.days(d).P_pv_B_dc_kW = P_pv_B_dc_kW;
-        data.days(d).Price.buy_huf = buy_huf;
-        data.days(d).dt_h = dt_load_h;
+        data.days(outIdx).P_load_kW = P_load_kW;
+        data.days(outIdx).P_pv_A_dc_kW = P_pv_A_dc_kW;
+        data.days(outIdx).P_pv_B_dc_kW = P_pv_B_dc_kW;
+
+        data.days(outIdx).Price.buy_huf = buy_huf;
+        data.days(outIdx).Price.sell_huf = sell_huf;
+
+        data.days(outIdx).dt_h = dt_load_h;
     end
 
+    if outIdx == 0
+        error('Nem maradt egyetlen szinkronizált nap sem Load/Price/PV illesztés után.');
+    end
+
+    data.days = data.days(1:outIdx);
+
     % =====================================================================
-    % 6) Info
+    % 8) Info
     % =====================================================================
     data.info = struct();
 
     data.info.createdAt = datetime('now');
-    data.info.nDays = nDays;
+    data.info.nDays = numel(data.days);
     data.info.dt_h = data.days(1).dt_h;
     data.info.nT = numel(data.days(1).P_load_kW);
 
     data.info.loadScale = cfg.loadScale;
 
-    data.info.firstDate = commonDates(1);
-    data.info.lastDate = commonDates(end);
+    data.info.firstDate = data.days(1).date;
+    data.info.lastDate = data.days(end).date;
 
-    data.info.rawLoadDays = numel(Load);
-    data.info.rawPriceDays = numel(Price);
+    data.info.rawLoadPriceDays = numel(Load);
     data.info.rawPvADays = numel(PV_A);
     data.info.rawPvBDays = numel(PV_B);
-    data.info.commonDays = nDays;
+
+    data.info.skippedMissingPV = skippedMissingPV;
+    data.info.skippedVectorMismatch = skippedVectorMismatch;
+
+    data.info.loadYears = loadYears;
+    data.info.pvYears = pvYears;
 
     data.info.P_pv_A_dc_kWp = sum(cfg.pvA.P_dc_kWp);
     data.info.P_pv_B_dc_kWp = sum(cfg.pvB.P_dc_kWp);
@@ -261,12 +312,37 @@ function data = build_data(cfg)
         data.info.P_pv_A_dc_kWp + data.info.P_pv_B_dc_kWp;
 
     fprintf('\nIndustrial time series synchronized.\n');
-    fprintf('Days: %d\n', data.info.nDays);
+    fprintf('Final simulation days: %d\n', data.info.nDays);
     fprintf('Steps per day: %d\n', data.info.nT);
     fprintf('dt_h: %.6f h\n', data.info.dt_h);
+    fprintf('Skipped days due to missing PV month-day: %d\n', skippedMissingPV);
+    fprintf('Skipped days due to vector mismatch: %d\n', skippedVectorMismatch);
     fprintf('PV_A: %.3f kWp\n', data.info.P_pv_A_dc_kWp);
     fprintf('PV_B: %.3f kWp\n', data.info.P_pv_B_dc_kWp);
     fprintf('PV total: %.3f kWp\n', data.info.P_pv_total_dc_kWp);
+end
+
+
+function pvMap = local_build_pv_year_mmdd_map(PV, label)
+
+    pvMap = containers.Map('KeyType', 'char', 'ValueType', 'double');
+
+    for i = 1:numel(PV)
+
+        key = local_year_mmdd_key(PV(i).year, PV(i).mmddKey);
+
+        if pvMap.isKey(key)
+            error('%s duplikált year-mmdd kulcs: %s', label, key);
+        end
+
+        pvMap(key) = i;
+    end
+end
+
+
+function key = local_year_mmdd_key(y, mmddKey)
+
+    key = sprintf('%04d-%s', y, char(mmddKey));
 end
 
 

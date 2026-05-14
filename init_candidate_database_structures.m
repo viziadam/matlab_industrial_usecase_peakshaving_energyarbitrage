@@ -22,15 +22,13 @@ function DB = init_candidate_database_structures(data, cfg)
     % =====================================================================
     % 2) Candidate tartományok
     % =====================================================================
-    E_BESS_vec = cfg.candidates.E_BESS_kWh_vec(:);
-    P_BESS_vec = cfg.candidates.P_BESS_kW_vec(:);
+    BESS_PV_ratio_vec = cfg.candidates.BESS_PV_ratio_vec(:);
 
-    nCandidates = numel(E_BESS_vec) * numel(P_BESS_vec);
+    nCandidates = numel(BESS_PV_ratio_vec);
 
     designFields = local_get_candidate_design_fields(cfg);
 
     candidateTable = local_create_candidate_table(nCandidates, cfg, designFields);
-
     % =====================================================================
     % 3) Candidate table feltöltése
     % =====================================================================
@@ -146,24 +144,9 @@ function local_validate_cfg(cfg)
     local_require_fields(cfg, requiredTop, 'cfg');
 
     local_require_fields(cfg.candidates, ...
-        {'E_BESS_kWh_vec', 'P_BESS_kW_vec', 'designFields'}, ...
+        {'BESS_PV_ratio_vec', 'bessDuration_h', 'designFields'}, ...
         'cfg.candidates');
 
-    if isempty(cfg.candidates.E_BESS_kWh_vec)
-        error('cfg.candidates.E_BESS_kWh_vec is empty.');
-    end
-
-    if isempty(cfg.candidates.P_BESS_kW_vec)
-        error('cfg.candidates.P_BESS_kW_vec is empty.');
-    end
-
-    if any(cfg.candidates.E_BESS_kWh_vec < 0)
-        error('All E_BESS_kWh_vec values must be non-negative.');
-    end
-
-    if any(cfg.candidates.P_BESS_kW_vec < 0)
-        error('All P_BESS_kW_vec values must be non-negative.');
-    end
 
     local_require_fields(cfg.output, {'scalarMetrics', 'profileMetrics'}, 'cfg.output');
 

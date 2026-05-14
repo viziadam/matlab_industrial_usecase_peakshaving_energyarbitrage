@@ -68,7 +68,8 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     step_res.E_loss_joule   = pack_out.E_loss_joule / 1000;
     step_res.E_loss_dcdc    = (P_loss_dcdc_W / 1000) .* dt_h;
     step_res.E_loss_inv     = P_loss_inv_kW .* dt_h;
-    step_res.E_clip_inv     = P_clip_kW .* dt_h; % Tényleges levágás BESS-szel
+    step_res.E_clip_inv        = P_clip_kW .* dt_h; % Tényleges levágás BESS-szel
+    step_res.P_curtailment_kW  = P_clip_kW;
     
     % 7.5. Referencia (Baseline) Adatok - Ebből számoljuk a megtakarítást!
     step_res.E_clip_base          = max((P_pv_dc_kW .* pars.inv_eta) - pars.P_inv_limit_ac, 0) .* dt_h;
@@ -76,6 +77,8 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     step_res.Cost_import_base_HUF = step_res.E_grid_import_base .* Prices.buy_huf;
 
     % 7.6. Belső Állapotok (Nap végi profilokhoz / mentéshez)
+    step_res.SoC            = pack_out.SOC(:);
+    step_res.SoH            = pack_out.SOH(:);
     step_res.SOC_end        = pack_out.SOC(end);
     step_res.SOH_end        = pack_out.SOH(end);
     step_res.T_cell_max     = max(pack_out.T_cell);

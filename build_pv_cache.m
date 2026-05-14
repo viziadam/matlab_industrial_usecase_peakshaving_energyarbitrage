@@ -1,139 +1,224 @@
 function PV = build_pv_cache(tiltX, tiltZ, Pdc_kWp, Ppan_kWp)
-    % BUILD_PV_CACHE - PV adatok dinamikus kinyerése és gyorsítótárazása
-    % Csak a teljes, 365 napos éveket dolgozza fel, a szökőnapokat (Feb 29) szűri.
-    % 
-    % Bemenetek:
-    %   tiltX   : Dőlésszög (pl. 10)
-    %   tiltZ   : Tájolás (pl. [90, 270] Kelet-Nyugat esetén)
-    %   Pdc_kWp : A tájolásokhoz tartozó beépített kapacitás [kWp] (pl. [274, 274])
-    
+% BUILD_PV_CACHE
+%
+% PV adatok betöltése a production mappából.
+%
+% Fontos működés:
+%   - Nem követeli meg a pontos 365 napos éveket.
+%   - Csak olyan éveket tart meg, ahol legalább 350 nem-szökőnapi adat van.
+%   - Feb 29 kimarad.
+%   - A kimenet tartalmaz date/year/month/day/mmddKey mezőket.
+%
+% Kimenet:
+%   PV(i).date
+%   PV(i).year
+%   PV(i).month
+%   PV(i).day
+%   PV(i).mmddKey
+%   PV(i).Ppv
+%   PV(i).timeMinVec
+%   PV(i).dt_h
+%   PV(i).timeDay
+
     persistent PV_MAP
-    
-    % Gyorsítótár inicializálása
+
+    minDaysPerYear = 350;
+
     if isempty(PV_MAP)
         PV_MAP = containers.Map('KeyType', 'char', 'ValueType', 'any');
     end
-    
-    % Egyedi kulcs generálása a bemenetekből
-    cacheKey = sprintf('X%s_Z%s_P%s', mat2str(tiltX), mat2str(tiltZ), mat2str(Pdc_kWp));
-    
+
+    cacheKey = sprintf('X%s_Z%s_P%s', ...
+        mat2str(tiltX), ...
+        mat2str(tiltZ), ...
+        mat2str(Pdc_kWp));
+
     if PV_MAP.isKey(cacheKey)
         fprintf('PV adatok betöltve a memóriából: %s\n', cacheKey);
         PV = PV_MAP(cacheKey);
         return;
     end
-    
+
     fprintf('PV adatok beolvasása a fájlokból: %s\n', cacheKey);
-    
-    % --- MAPPA AUTOMATIKUS KERESÉSE ---
+
     thisDir = fileparts(mfilename('fullpath'));
     pvDir = fullfile(thisDir, 'production');
-    
+
     files = dir(fullfile(pvDir, '*.mat'));
-    nF = numel(files);
-    if nF == 0, error('Hiba: Nem találhatók .mat fájlok a %s mappában!', pvDir); end
-    
-    % =========================================================================
-    % --- DÁTUMOK KINYERÉSE ÉS CSONKA ÉVEK (pl. 2019) KISZŰRÉSE ---
-    % =========================================================================
-    fprintf('Dátumok ellenőrzése és csonka évek kiszűrése...\n');
-    dates = zeros(nF, 3);
-    
-    % Próbáljuk a fájlnévből kinyerni (gyorsabb)
-    parseDate = @(fname) str2double(regexp(fname, '(\d{4})[._-](\d{2})[._-](\d{2})', 'tokens', 'once'));
-    
-    for i = 1:nF
-        tmp = parseDate(files(i).name);
-        if ~isempty(tmp)
-            dates(i,:) = tmp;
-        else
-            % Fallback: ha nincs a fájlnévben, gyorsan belenézünk a fájlba
-            S_temp = load(fullfile(pvDir, files(i).name), 'resultBuffer');
-            if isfield(S_temp, 'resultBuffer') && isfield(S_temp.resultBuffer, 'timeDay')
-                dStr = S_temp.resultBuffer.timeDay; % pl. '2019.06.03'
-                dates(i,:) = str2double(strsplit(dStr, '.'));
+
+    if isempty(files)
+        error('Nem találhatók .mat fájlok a production mappában: %s', pvDir);
+    end
+
+    rawPV = struct( ...
+        'date', {}, ...
+        'year', {}, ...
+        'month', {}, ...
+        'day', {}, ...
+        'mmddKey', {}, ...
+        'Ppv', {}, ...
+        'timeMinVec', {}, ...
+        'dt_h', {}, ...
+        'timeDay', {}, ...
+        'fileName', {});
+
+    for k = 1:numel(files)
+
+        filePath = fullfile(pvDir, files(k).name);
+        S = load(filePath);
+
+        if ~isfield(S, 'resultBuffer')
+            error('A PV fájl nem tartalmaz resultBuffer változót: %s', files(k).name);
+        end
+
+        rb = S.resultBuffer;
+
+        requiredFields = {'timeDay', 'timeVectorMin', 'timeStepMin', 'results'};
+
+        for f = 1:numel(requiredFields)
+            if ~isfield(rb, requiredFields{f})
+                error('A resultBuffer nem tartalmazza ezt a mezőt: %s, fájl: %s', ...
+                    requiredFields{f}, files(k).name);
             end
         end
-    end
-    
-    % 1. Szökőnapok (Február 29.) törlése a Standard 365 napos naptárhoz
-    validDays = ~(dates(:,2) == 2 & dates(:,3) == 29);
-    files = files(validDays);
-    dates = dates(validDays, :);
-    
-    % 2. Csak a teljes (365 napos) évek megtartása
-    years = dates(:,1);
-    uniqueYears = unique(years);
-    validYears = [];
-    
-    for y = uniqueYears'
-        daysInYear = sum(years == y);
-        if daysInYear == 365
-            validYears(end+1) = y;
-        else
-            fprintf('  -> Csonka év eldobva: %d (csak %d napot tartalmaz)\n', y, daysInYear);
-        end
-    end
-    
-    if isempty(validYears)
-        error('Hiba: A szűrés után nem maradt egyetlen teljes (365 napos) év sem a mappában!');
-    end
-    
-    % Fájlok szűrése csak a teljes évekre
-    isFullYear = ismember(years, validYears);
-    files = files(isFullYear);
-    nF = numel(files);
-    
-    fprintf('Szűrés kész: %d teljes év (%d nap) kerül a memóriába.\n', numel(validYears), nF);
-    % =========================================================================
 
-    % --- ELŐALLOKÁLÁS A KÉRT FORMÁTUMRA ---
-    PV(nF) = struct('Ppv', [], 'timeMinVec', [], 'dt_h', [], 'timeDay', '');
-    
-    for k = 1:nF
-        fPath = fullfile(pvDir, files(k).name);
-        S = load(fPath);
-        
-        if ~isfield(S, 'resultBuffer'), continue; end
-        rb = S.resultBuffer;
-        
-        timeMinVec = rb.timeVectorMin;
-        resTable = rb.results; % A 32x3-as MATLAB Table
-        
-        Ppv_total = zeros(1, length(timeMinVec));
-        
-        % Végigmegyünk a kért dőlés/tájolás párosokon
-        for c = 1:length(tiltZ)
-            if isscalar(tiltX), cX = tiltX; else, cX = tiltX(c); end
+        dt = local_parse_date_string(rb.timeDay);
+
+        if month(dt) == 2 && day(dt) == 29
+            continue;
+        end
+
+        timeMinVec = rb.timeVectorMin(:).';
+        resTable = rb.results;
+
+        requiredTableVars = {'tiltX', 'tiltZ', 'tPDC'};
+
+        for f = 1:numel(requiredTableVars)
+            if ~ismember(requiredTableVars{f}, resTable.Properties.VariableNames)
+                error('A PV results table nem tartalmazza ezt az oszlopot: %s, fájl: %s', ...
+                    requiredTableVars{f}, files(k).name);
+            end
+        end
+
+        Ppv_total = zeros(1, numel(timeMinVec));
+
+        for c = 1:numel(tiltZ)
+
+            if isscalar(tiltX)
+                cX = tiltX;
+            else
+                cX = tiltX(c);
+            end
+
             cZ = tiltZ(c);
             cPower = Pdc_kWp(c);
-            
-            % Keresés a Table-ben
-            rowIdx = find(resTable.tiltX == cX & resTable.tiltZ == cZ);
-            
+
+            rowIdx = find(resTable.tiltX == cX & resTable.tiltZ == cZ, 1);
+
             if isempty(rowIdx)
-                warning('Kihagyva: tiltX=%d, tiltZ=%d nem található a(z) %s fájlban.', cX, cZ, files(k).name);
-                continue;
+                error('Nem található PV sor: tiltX=%g, tiltZ=%g, fájl: %s', ...
+                    cX, cZ, files(k).name);
             end
-            
-            % Nyers adat kinyerése és felskálázása
-            % Ellenőrizzük, hogy cellatömb-e, és kicsomagoljuk {} segítségével
+
             if iscell(resTable.tPDC)
                 tPDC_raw = resTable.tPDC{rowIdx};
             else
                 tPDC_raw = resTable.tPDC(rowIdx, :);
             end
-            
+
+            tPDC_raw = tPDC_raw(:).';
+
+            if numel(tPDC_raw) ~= numel(timeMinVec)
+                error('A tPDC és timeVectorMin hossza eltér, fájl: %s', files(k).name);
+            end
+
             Ppv_total = Ppv_total + (tPDC_raw .* cPower / Ppan_kWp);
         end
-        
-        % --- KIMENETI MEZŐK KITÖLTÉSE PONTOSAN A KÉRT FORMÁBAN ---
-        PV(k).Ppv        = Ppv_total;           % sorvektor [kW]
-        PV(k).timeMinVec = timeMinVec;          % sorvektor
-        PV(k).dt_h       = rb.timeStepMin / 60; % skalár
-        PV(k).timeDay    = rb.timeDay;          
+
+        item = struct();
+
+        item.date = dt;
+        item.year = year(dt);
+        item.month = month(dt);
+        item.day = day(dt);
+        item.mmddKey = local_mmdd_key(item.month, item.day);
+        item.Ppv = Ppv_total;
+        item.timeMinVec = timeMinVec;
+        item.dt_h = rb.timeStepMin / 60;
+        item.timeDay = rb.timeDay;
+        item.fileName = string(files(k).name);
+
+        rawPV(end+1) = item; %#ok<AGROW>
     end
-    
-    % Mentés a RAM-ba
+
+    if isempty(rawPV)
+        error('Nem maradt beolvasható PV nap.');
+    end
+
+    % =====================================================================
+    % Évek szűrése legalább 350 nap alapján
+    % =====================================================================
+    yearsPV = unique([rawPV.year]);
+
+    validYears = [];
+
+    for i = 1:numel(yearsPV)
+
+        y = yearsPV(i);
+        nDaysY = sum([rawPV.year] == y);
+
+        if nDaysY >= minDaysPerYear
+            validYears(end+1) = y; %#ok<AGROW>
+        else
+            fprintf('PV év kihagyva: %d, csak %d nap áll rendelkezésre.\n', ...
+                y, nDaysY);
+        end
+    end
+
+    if isempty(validYears)
+        error('Nincs olyan PV év, ahol legalább %d nap rendelkezésre áll.', ...
+            minDaysPerYear);
+    end
+
+    keep = ismember([rawPV.year], validYears);
+    PV = rawPV(keep);
+
+    [~, order] = sort([PV.date]);
+    PV = PV(order);
+
+    fprintf('PV szűrés kész: %d valid év, %d nap kerül a memóriába.\n', ...
+        numel(validYears), numel(PV));
+
     PV_MAP(cacheKey) = PV;
+end
+
+
+function dt = local_parse_date_string(dateString)
+
+    if isstring(dateString)
+        dateString = char(dateString);
+    end
+
+    tokens = regexp(dateString, '(\d{4})[.\-_](\d{1,2})[.\-_](\d{1,2})', ...
+        'tokens', 'once');
+
+    if isempty(tokens)
+        error('Nem értelmezhető PV dátum string: %s', string(dateString));
+    end
+
+    y = str2double(tokens{1});
+    m = str2double(tokens{2});
+    d = str2double(tokens{3});
+
+    if any(isnan([y, m, d]))
+        error('Nem numerikus PV dátum komponens: %s', string(dateString));
+    end
+
+    dt = datetime(y, m, d);
+end
+
+
+function key = local_mmdd_key(m, d)
+
+    key = sprintf('%02d-%02d', m, d);
 end

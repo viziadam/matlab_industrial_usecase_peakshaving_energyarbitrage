@@ -140,6 +140,13 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     daily_planned_peak = NaN(1, nDays);
     daily_overrun_cost = zeros(1, nDays);
 
+    % Diagnosztikai napi költség- és energia tömbök
+    daily_energy_cost = zeros(1, nDays);
+    daily_deg_cost = zeros(1, nDays);
+    daily_total_cost = zeros(1, nDays);
+    daily_bess_throughput = zeros(1, nDays);
+    daily_ref_contract = contract_kW * ones(1, nDays);
+
     % =====================================================================
     % 5) Topológia kapcsoló
     % =====================================================================
@@ -264,16 +271,12 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
                     pars, ...
                     state_bess, ...
                     dc.dt_h);
-                if kk == nDays
-                    final_day_detail = day_detail.final_day;
-                end
+                
             case "ac"
 
                 error(['AC-csatolt ipari dispatch még nincs implementálva. ', ...
                        'Később itt kell közvetlenül meghívni az AC MILP planner és AC topology függvényeket.']);
-                if kk == nDays
-                    final_day_detail = day_detail.final_day;
-                end
+                
         end
 
         % -----------------------------------------------------------------
@@ -379,6 +382,20 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
         daily_planned_peak(kk) = plan_today.P_month_peak_candidate;
         daily_overrun_cost(kk) = overrun_increment_cost_actual;
 
+        daily_energy_cost(kk) = sum(C_energy_step_HUF(:));
+        daily_deg_cost(kk) = sum(C_degradation_step_HUF(:));
+
+        % Itt a napi total tartalmazza a napi contract költséget is,
+        % mert a jelenlegi objectiveCost_HUF is így épül fel.
+        daily_total_cost(kk) = ...
+            sum(C_energy_step_HUF(:)) + ...
+            sum(C_degradation_step_HUF(:)) + ...
+            sum(C_overrun_step_HUF(:)) + ...
+            sum(C_contract_step_HUF(:));
+
+        daily_bess_throughput(kk) = ...
+            sum(dayRes.E_stored(:) + dayRes.E_discharged(:));
+
         % -----------------------------------------------------------------
         % Diagnosztika
         % -----------------------------------------------------------------
@@ -405,6 +422,10 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
                 day_detail.final_day.price = dc.Prices_today;
                 day_detail.final_day.soc_start = soc_start_of_day;
                 day_detail.final_day.dayVectors = dayVectors;
+
+                if kk == nDays
+                    final_day_detail = day_detail.final_day;
+                end
 
                 if is_requested_detail_day
                     day_detail.type = 'representative';
@@ -449,10 +470,18 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
     result.contract_kW = contract_kW;
 
+    result.days_axis = [day_cache.abs_day];
+
     result.daily_peak_with_bess = daily_peak_with_bess;
     result.daily_peak_no_bess = daily_peak_no_bess;
     result.daily_planned_peak = daily_planned_peak;
     result.daily_overrun_cost = daily_overrun_cost;
+
+    result.daily_energy_cost = daily_energy_cost;
+    result.daily_deg_cost = daily_deg_cost;
+    result.daily_total_cost = daily_total_cost;
+    result.daily_bess_throughput = daily_bess_throughput;
+    result.daily_ref_contract = daily_ref_contract;
 
     result.finalSoC = finalSoC;
     result.finalSoH = finalSoH;
@@ -477,4 +506,11 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     detail.detail_days = detail_days;
     detail.overrun_detail_days = overrun_detail_days;
     detail.detail_cfg = detail_cfg;
+end
+
+% =========================================================================
+% 30 NAPOS HÓNAPINDEX A JELENLEGI SZIMULÁCIÓS KERETHEZ
+% =========================================================================
+function month_id = local_get_month_id_from_abs_day_4y(abs_day)
+    month_id = floor((abs_day - 1) / 30) + 1;
 end
