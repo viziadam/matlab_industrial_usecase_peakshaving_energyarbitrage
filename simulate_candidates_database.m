@@ -147,6 +147,20 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 DB.diagnostics.(fieldName).design = design;
                 DB.diagnostics.(fieldName).summary = simSummary;
                 DB.diagnostics.(fieldName).detail = detail;
+
+                % -------------------------------------------------------------
+                % Dispatch / planner diagnostic plots
+                % -------------------------------------------------------------
+                if isfield(cfgRun.diagnostics, 'makeDispatchDiagnosticPlots') && ...
+                    cfgRun.diagnostics.makeDispatchDiagnosticPlots
+
+                    local_plot_embedded_dispatch_diagnostics( ...
+                        cfgRun, ...
+                        c, ...
+                        design, ...
+                        simSummary, ...
+                        detail);
+                end
             end
 
         catch ME

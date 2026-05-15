@@ -89,6 +89,9 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
 
     pars.P_inv_limit_ac = design.P_inv_kW;
     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
+
+    pars.bessCoupling = lower(string(cfg.system.bessCoupling));
+ 
     % if ~isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
     %     error('Hiányzó cfg.dispatch.P_grid_hard_cap_kW.');
     % end

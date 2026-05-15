@@ -89,10 +89,7 @@ function diagnostics = run_simulation_diagnostics(cfg)
         full_result.detail_cfg = detail.detail_cfg;
     end
 
-    plot_contract_search_summary_4y(simSummary.search_result);
-    plot_full_horizon_summary_4y(full_result, simSummary.bestContract_kW);
-    plot_final_day_detail_4y(full_result, simSummary.pars);
-    plot_selected_day_details_4y(full_result, simSummary.pars);
+     
 
     plot_planner_execution_debug(full_result);
 

@@ -15,7 +15,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 1) System
     % =====================================================================
-    cfg.system.bessCoupling = "dc"; 
+    cfg.system.bessCoupling = "ac"; 
     % Később:
     %   "dc" -> DC-csatolt ipari dispatch
     %   "ac" -> AC-csatolt ipari dispatch
@@ -23,6 +23,8 @@ function cfg = create_configurations(basePath)
     cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
     cfg.grid.allowExport = false;
+    cfg.targetStepMin = 15;
+    cfg.aggregationMethod = "mean";
 
     % =====================================================================
     % 2) Paths
@@ -83,6 +85,8 @@ function cfg = create_configurations(basePath)
 
     cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
     cfg.candidates.bessDuration_h = 2;
+
+    
 
     cfg.candidates.designFields = { ...
         'BESS_PV_ratio', ...
@@ -171,6 +175,10 @@ function cfg = create_configurations(basePath)
     cfg.diagnostics.closeFiguresAfterSave = false;
     cfg.diagnostics.printPlannerDebug = true;
     cfg.diagnostics.maxPrintedDebugDays = 15;
+
+    cfg.diagnostics.makePlannerExecutionDebugPlot = true;
+    cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
+    cfg.diagnostics.makeDispatchDiagnosticPlots = true;
 
     cfg.diagnostics.runEvaluation = true;
     cfg.diagnostics.outputFolder = fullfile(cfg.paths.results, 'diagnostics');

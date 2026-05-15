@@ -1004,15 +1004,31 @@ function result = evaluate_contract_on_validation_days(contract_kW, day_cache, v
         % --------------------------------------------------------------
         % Planner futtatasa
         % --------------------------------------------------------------
-        plan_full = ems_day_ahead_planner_milp_contract( ...
-            dc.P_load_48h, ...
-            dc.P_pv_48h, ...
-            dc.Prices_48h, ...
-            pars, ...
-            tariff, ...
-            dc.dt_h, ...
-            contract_state, ...
-            15);
+        if isfield(pars, 'bessCoupling') && lower(string(pars.bessCoupling)) == "ac"
+
+            plan_full = ems_day_ahead_planner_milp_contract_ac( ...
+                dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, ...
+                pars, tariff, dc.dt_h, contract_state, 15);
+
+        else
+
+            plan_full = ems_day_ahead_planner_milp_contract( ...
+                dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, ...
+                pars, tariff, dc.dt_h, contract_state, 15);
+
+        end
+
+        if isfield(plan_full, 'exitflag') && plan_full.exitflag <= 0
+
+            result = local_infeasible_contract_result(contract_kW, nValDays);
+            return;
+        end
+
+        if isfield(plan_full, 'objective_value') && ~isfinite(plan_full.objective_value)
+
+            result = local_infeasible_contract_result(contract_kW, nValDays);
+            return;
+        end
 
         % --------------------------------------------------------------
         % Csak az elso nap hasznalata a 48 oras tervbol
@@ -1387,6 +1403,45 @@ end
 %     result.final_day.soc_start = soc_start_of_final_day;
 % end
 
+function result = local_infeasible_contract_result(contract_kW, nValDays)
+
+    result = struct();
+
+    result.contract_kW = contract_kW;
+
+    result.energy_cost_period_huf = inf;
+    result.degradation_cost_period_huf = inf;
+    result.overrun_cost_period_huf = inf;
+    result.contract_cost_period_huf = inf;
+    result.total_cost_period_huf = inf;
+
+    result.contract_capacity_cost_period_huf = inf;
+    result.base_fee_cost_period_huf = inf;
+
+    result.period_days = nValDays;
+    result.period_month_fraction = NaN;
+    result.period_peak_with_bess_kW = inf;
+    result.period_overrun_kW = inf;
+
+    result.daily_peak_no_bess = NaN(1, nValDays);
+    result.daily_peak_with_bess = NaN(1, nValDays);
+    result.daily_energy_cost = NaN(1, nValDays);
+    result.daily_deg_cost = NaN(1, nValDays);
+    result.daily_overrun_cost = NaN(1, nValDays);
+    result.daily_total_cost = NaN(1, nValDays);
+    result.daily_bess_throughput = NaN(1, nValDays);
+    result.daily_planned_peak = NaN(1, nValDays);
+    result.daily_ref_contract = contract_kW * ones(1, nValDays);
+    result.days_axis = NaN(1, nValDays);
+
+    result.final_day = struct();
+    result.final_day.plan = [];
+    result.final_day.res = [];
+    result.final_day.load = [];
+    result.final_day.pv = [];
+    result.final_day.price = [];
+    result.final_day.soc_start = NaN;
+end
 
 function month_id = local_get_month_id_from_abs_day(abs_day)
 % Egyszerű 30 napos hónaplogika a jelenlegi tesztkörnyezethez
