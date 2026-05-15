@@ -612,9 +612,15 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         SoC0 = 0.5;
     end
 
-    if SoC0 < pars.SoC_min || SoC0 > pars.SoC_max
-        error('AC MILP induló SoC kívül van a megengedett tartományon.');
+    socTol = 1e-4;
+
+    if SoC0 < pars.SoC_min - socTol || SoC0 > pars.SoC_max + socTol
+        error(['AC MILP induló SoC kívül van a megengedett tartományon. ', ...
+            'SoC0 = %.8f, SoC_min = %.8f, SoC_max = %.8f'], ...
+            SoC0, pars.SoC_min, pars.SoC_max);
     end
+
+    SoC0 = min(max(SoC0, pars.SoC_min), pars.SoC_max);
 
     Pcontract = contract_state.P_contract_kW;
     PmonthOld = contract_state.P_month_max_so_far_kW;
@@ -652,7 +658,7 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     %   penalty_rate_huf_per_kW_year [HUF/kW/year]
     %   dt_h / (365*24)              [year]
     %   => HUF/kW per timestep
-    cOver = tariff.penalty_rate_huf_per_kW_year * dt_h / (365 * 24);
+    cOver = tariff.penalty_rate_huf_per_kW_year / 12;
 
     % =====================================================================
     % Döntési változók
@@ -783,6 +789,8 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     lb(iMode) = 0;
     ub(iMode) = 1;
+
+    ub(iPover) = 0;
 
     intcon = iMode;
 
