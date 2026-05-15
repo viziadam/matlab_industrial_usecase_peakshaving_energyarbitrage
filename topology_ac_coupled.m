@@ -130,15 +130,25 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     P_grid_base_kW = P_load_kW - P_pv_ac_kW;
 
     % =====================================================================
-    % 6) Könyvelés
+    % 6) Metrikak osszegzese
     % =====================================================================
+    P_grid_net_kW    = P_grid_final_kW;
+    P_grid_import_kW = max(P_grid_net_kW, 0);
+    P_grid_export_kW = max(-P_grid_net_kW, 0);
+
+    P_bess_actual_kW = P_bess_ac_actual_kW;
+
+    % AC topology-ban a tényleges "spill" csak a PV inverter clipping.
+    % Ha export van, azt külön P_grid_export_kW mezőként mentjük, nem spillként.
+    P_spill_kW = P_clip_pv_kW;
+
     step_res = struct();
 
     step_res.E_pv_dc = P_pv_dc_kW .* dt_h;
     step_res.E_load = P_load_kW .* dt_h;
 
-    step_res.E_grid_import = max(P_grid_final_kW, 0) .* dt_h;
-    step_res.E_grid_export = abs(min(P_grid_final_kW, 0)) .* dt_h;
+    step_res.E_grid_import = P_grid_import_kW .* dt_h;
+    step_res.E_grid_export = P_grid_export_kW .* dt_h;
 
     step_res.Cost_import_HUF = ...
         step_res.E_grid_import .* Prices.buy_huf(:).';
@@ -149,10 +159,8 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     step_res.E_stored = pack_out.E_stored / 1000;
     step_res.E_discharged = pack_out.E_discharged / 1000;
 
-    % Kompatibilis mezőnév a meglévő dayVectors / plot logikához
+    % Kompatibilis mezők
     step_res.E_bess_dc = P_pack_actual_kW .* dt_h;
-
-    % AC-specifikus diagnosztikai mező
     step_res.E_bess_ac = P_bess_ac_actual_kW .* dt_h;
 
     step_res.E_loss_joule = pack_out.E_loss_joule / 1000;
@@ -164,7 +172,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     step_res.E_clip_inv = ...
         (P_clip_pv_kW + P_clip_bess_inv_kW) .* dt_h;
 
-    step_res.P_curtailment_kW = P_clip_pv_kW;
+    step_res.P_curtailment_kW = P_spill_kW;
 
     step_res.E_clip_base = P_clip_pv_kW .* dt_h;
 
@@ -180,7 +188,17 @@ function [step_res, state_bess] = topology_ac_coupled( ...
 
     step_res.T_cell_max = max(pack_out.T_cell);
 
+    % Egységes actual teljesítménymezők plothoz / diagnosztikához
+    step_res.P_grid_net_kW = P_grid_net_kW(:);
+    step_res.P_grid_import_kW = P_grid_import_kW(:);
+    step_res.P_grid_export_kW = P_grid_export_kW(:);
+
     step_res.P_pv_ac_kW = P_pv_ac_kW(:);
+
+    step_res.P_bess_actual_kW = P_bess_actual_kW(:);
     step_res.P_bess_ac_actual_kW = P_bess_ac_actual_kW(:);
     step_res.P_pack_actual_kW = P_pack_actual_kW(:);
+
+    step_res.P_spill_kW = P_spill_kW(:);
+    
 end

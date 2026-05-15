@@ -410,131 +410,238 @@ end
 % end
 
 function plot_final_day_detail_4y(full_result, pars, day_label)
+% PLOT_FINAL_DAY_DETAIL_4Y
+%
+% Részletes napi diagnosztikai ábra.
+%
+% Cél:
+%   - tényleges topology eredmények megjelenítése;
+%   - planner terv és tényleges végrehajtás összehasonlítása;
+%   - DC és AC topology esetén is működjön.
+%
+% Fontos:
+%   - actual értékekhez elsődlegesen a topology által mentett P_* mezőket
+%     használja;
+%   - csak akkor számol vissza energiából, ha a P_* mező még hiányzik.
 
     if nargin < 3 || isempty(day_label)
         day_label = 'Utolsó nap';
     end
 
-    if isempty(full_result.final_day.plan)
+    if ~isfield(full_result, 'final_day') || isempty(full_result.final_day)
         return;
     end
 
-    plot_plan  = full_result.final_day.plan;
-    plot_res   = full_result.final_day.res;
-    plot_load  = full_result.final_day.load(:);
-    plot_pv    = full_result.final_day.pv(:);
-    plot_price = full_result.final_day.price;
-    soc_start  = full_result.final_day.soc_start;
-
-    n = length(plot_load);
-    time_hours = linspace(0, 24, n);
-    dt_plot = 24 / n;
-
-    % =====================================================================
-    % Tényleges teljesítmények a topology eredményből
-    % =====================================================================
-    P_grid_import = plot_res.E_grid_import(:) / dt_plot;
-
-    P_bess_charge_actual = plot_res.E_stored(:) / dt_plot;
-    P_bess_dis_actual    = plot_res.E_discharged(:) / dt_plot;
-
-    % Előjelhelyes BESS teljesítmény:
-    %   pozitív = kisütés a load felé
-    %   negatív = töltés
-    P_bess_actual = P_bess_dis_actual - P_bess_charge_actual;
-
-    if isfield(plot_res, 'E_bess_dc')
-        P_bess_dc_plot = plot_res.E_bess_dc(:) / dt_plot;
-    else
-        P_bess_dc_plot = P_bess_actual;
+    if ~isfield(full_result.final_day, 'plan') || isempty(full_result.final_day.plan)
+        return;
     end
 
+    plan  = full_result.final_day.plan;
+    res   = full_result.final_day.res;
+    load  = full_result.final_day.load(:);
+    pvdc  = full_result.final_day.pv(:);
+    price = full_result.final_day.price;
+    soc0  = full_result.final_day.soc_start;
+
+    n = numel(load);
+    dt_h = 24 / n;
+    t = (0:n-1).' * dt_h;
+
     % =====================================================================
-    % Planner teljesítmények
+    % ACTUAL értékek topology-ból
     % =====================================================================
-    P_grid_plan = local_get_plan_vector(plot_plan, 'P_grid_plan', n, NaN);
 
-    P_ch_plan  = local_get_plan_vector(plot_plan, 'P_ch_plan', n, 0);
-    P_dis_plan = local_get_plan_vector(plot_plan, 'P_dis_plan', n, 0);
-
-    % Előjelhelyes planner BESS teljesítmény:
-    %   pozitív = kisütés
-    %   negatív = töltés
-    P_bess_plan = P_dis_plan - P_ch_plan;
-
-    if isfield(plot_plan, 'P_grid_limit')
-        P_grid_limit = plot_plan.P_grid_limit;
-    elseif isfield(plot_plan, 'P_contract_safety_factor') && isfield(plot_plan, 'P_contract')
-        P_grid_limit = plot_plan.P_contract_safety_factor * plot_plan.P_contract;
+    if isfield(res, 'P_grid_import_kW')
+        PgridImport = local_vec(res.P_grid_import_kW, n);
     else
-        P_grid_limit = NaN;
+        PgridImport = local_vec(res.E_grid_import, n) / dt_h;
     end
+
+    if isfield(res, 'P_grid_export_kW')
+        PgridExport = local_vec(res.P_grid_export_kW, n);
+    elseif isfield(res, 'E_grid_export')
+        PgridExport = local_vec(res.E_grid_export, n) / dt_h;
+    else
+        PgridExport = zeros(n, 1);
+    end
+
+    if isfield(res, 'P_grid_net_kW')
+        PgridNet = local_vec(res.P_grid_net_kW, n);
+    else
+        PgridNet = PgridImport - PgridExport;
+    end
+
+    if isfield(res, 'P_bess_actual_kW')
+        PbessActual = local_vec(res.P_bess_actual_kW, n);
+    elseif isfield(res, 'P_bess_ac_actual_kW')
+        PbessActual = local_vec(res.P_bess_ac_actual_kW, n);
+    elseif isfield(res, 'P_bess_dc_actual_kW')
+        PbessActual = local_vec(res.P_bess_dc_actual_kW, n);
+    elseif isfield(res, 'E_bess_ac')
+        PbessActual = local_vec(res.E_bess_ac, n) / dt_h;
+    elseif isfield(res, 'E_bess_dc')
+        PbessActual = local_vec(res.E_bess_dc, n) / dt_h;
+    else
+        PbessActual = local_vec(res.E_discharged, n) / dt_h - ...
+                      local_vec(res.E_stored, n) / dt_h;
+    end
+
+    if isfield(res, 'P_pv_ac_kW')
+        PpvActual = local_vec(res.P_pv_ac_kW, n);
+    elseif isfield(res, 'P_inv_ac_kW')
+        PpvActual = local_vec(res.P_inv_ac_kW, n);
+    else
+        PpvActual = min(pvdc * pars.inv_eta, pars.P_inv_limit_ac);
+    end
+
+    if isfield(res, 'P_spill_kW')
+        PspillActual = local_vec(res.P_spill_kW, n);
+    elseif isfield(res, 'P_curtailment_kW')
+        PspillActual = local_vec(res.P_curtailment_kW, n);
+    else
+        PspillActual = zeros(n, 1);
+    end
+
+    if isfield(res, 'SoC')
+        SocActual = local_vec(res.SoC, n);
+    else
+        E_net = local_vec(res.E_stored, n) - local_vec(res.E_discharged, n);
+        SocActual = soc0 + cumsum(E_net) / pars.E_cap_nom;
+    end
+
+    PchActual  = max(-PbessActual, 0);
+    PdisActual = max(PbessActual, 0);
+
+    % =====================================================================
+    % PLANNER értékek
+    % =====================================================================
+
+    PgridPlan = local_plan_vec(plan, 'P_grid_plan', n, NaN);
+    PchPlan   = local_plan_vec(plan, 'P_ch_plan', n, 0);
+    PdisPlan  = local_plan_vec(plan, 'P_dis_plan', n, 0);
+    PbessPlan = PdisPlan - PchPlan;
+    SocPlan   = local_plan_vec(plan, 'SoC_plan', n, NaN);
+
+    PspillPlan = local_plan_vec(plan, 'P_spill_plan', n, NaN);
+
+    if all(isnan(PspillPlan))
+        PspillPlan = local_plan_vec(plan, 'P_curt_plan', n, NaN);
+    end
+
+    PoverPlan = local_plan_vec(plan, 'P_over_plan', n, NaN);
+
+    PgloadPlan  = local_plan_vec(plan, 'P_gload_plan', n, NaN);
+    PgbattPlan  = local_plan_vec(plan, 'P_gbatt_plan', n, NaN);
+    PpvloadPlan = local_plan_vec(plan, 'P_pvload_plan', n, NaN);
+    PpvbattPlan = local_plan_vec(plan, 'P_pvbatt_plan', n, NaN);
+    PbloadPlan  = local_plan_vec(plan, 'P_bload_plan', n, NaN);
+
+    if isfield(plan, 'P_grid_limit')
+        PgridLimit = plan.P_grid_limit;
+    elseif isfield(plan, 'P_contract_safety_factor') && isfield(plan, 'P_contract')
+        PgridLimit = plan.P_contract_safety_factor * plan.P_contract;
+    else
+        PgridLimit = NaN;
+    end
+
+    if isfield(plan, 'P_contract')
+        Pcontract = plan.P_contract;
+    else
+        Pcontract = NaN;
+    end
+
+    buy = price.buy_huf(:);
+    buy = local_vec(buy, n);
 
     % =====================================================================
     % Figure
     % =====================================================================
-    figure('Name', [day_label, ' részletes nézet'], 'Position', [80, 40, 1350, 1250]);
+
+    figure('Name', [day_label, ' részletes nézet'], ...
+        'Position', [80, 40, 1400, 1250]);
 
     % =====================================================================
-    % 1) Teljesítményáramlások
+    % 1) Tényleges topology teljesítmények
     % =====================================================================
     subplot(5,1,1); hold on; grid on;
-    title([day_label, ': teljesítményáramlások']);
+    title([day_label, ': tényleges topology teljesítmények']);
 
-    P_pv_ac = min(plot_pv * pars.inv_eta, pars.P_inv_limit_ac);
+    plot(t, load,          'k-', 'LineWidth', 1.4, 'DisplayName', 'Load actual');
+    plot(t, PpvActual,     'g-', 'LineWidth', 1.2, 'DisplayName', 'PV / inverter AC actual');
+    plot(t, PgridImport,   'b-', 'LineWidth', 1.4, 'DisplayName', 'Grid import actual');
+    plot(t, PgridExport,   'c-', 'LineWidth', 1.1, 'DisplayName', 'Grid export actual');
+    plot(t, PbessActual,   'r-', 'LineWidth', 1.2, 'DisplayName', 'BESS actual (+dis / -ch)');
+    plot(t, PspillActual,  'm-', 'LineWidth', 1.1, 'DisplayName', 'Spill / clipping actual');
 
-    % Ez továbbra is vizuális felbontás, nem feltétlenül az AC MILP pontos
-    % energiaút-felbontása. Az új 5. subplot mutatja a planner vs actual eltérést.
-    P_pv_to_load = min(P_pv_ac, plot_load);
-    residual_after_pv = max(plot_load - P_pv_to_load, 0);
-
-    P_bess_to_load = min(P_bess_dis_actual, residual_after_pv);
-    P_grid_to_load = max(plot_load - P_pv_to_load - P_bess_to_load, 0);
-
-    h = area(time_hours, [P_pv_to_load, P_bess_to_load, P_grid_to_load]);
-    h(1).FaceColor = [0.4660 0.6740 0.1880]; h(1).DisplayName = 'PV -> Load';
-    h(2).FaceColor = [0.0000 0.4470 0.7410]; h(2).DisplayName = 'BESS -> Load';
-    h(3).FaceColor = [0.6350 0.0780 0.1840]; h(3).DisplayName = 'Grid -> Load';
-
-    plot(time_hours, P_bess_charge_actual, 'Color', [0.9290 0.6940 0.1250], ...
-        'LineWidth', 2, 'DisplayName', 'BESS töltés');
-
-    plot(time_hours, plot_load, 'k-', 'LineWidth', 1.2, 'DisplayName', 'Összes load');
-
-    yline(plot_plan.P_contract, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Contract');
-
-    if isfinite(P_grid_limit)
-        yline(P_grid_limit, 'm--', 'LineWidth', 1.2, 'DisplayName', 'Planner grid limit');
+    if isfinite(Pcontract)
+        yline(Pcontract, 'r--', 'LineWidth', 1.2, 'DisplayName', 'Contract');
     end
 
-    ylabel('Teljesítmény [kW]');
+    if isfinite(PgridLimit)
+        yline(PgridLimit, 'm--', 'LineWidth', 1.2, 'DisplayName', 'Grid limit');
+    end
+
+    ylabel('P [kW]');
     xlim([0 24]);
     legend('Location', 'northeastoutside');
 
     % =====================================================================
-    % 2) Ár és töltési/kisütési ablakok
+    % 2) Planner felbontott energiaáramok
     % =====================================================================
     subplot(5,1,2); hold on; grid on;
-    title([day_label, ': ár és töltési/kisütési ablakok']);
+    title([day_label, ': planner felbontott energiaáramok']);
 
-    buy_huf = plot_price.buy_huf(:);
-
-    plot(time_hours, buy_huf, 'k', 'LineWidth', 1.5, 'DisplayName', 'Vételi ár');
-
-    buy_idx = find(plot_plan.trade_buy_mask);
-    buy_idx = buy_idx(buy_idx <= n);
-
-    if ~isempty(buy_idx)
-        plot(time_hours(buy_idx), buy_huf(buy_idx), 'g.', ...
-            'MarkerSize', 15, 'DisplayName', 'Töltési ablak');
+    if any(isfinite(PgloadPlan))
+        plot(t, PgloadPlan,  'b-',  'LineWidth', 1.2, 'DisplayName', 'Plan grid -> load');
     end
 
-    sell_idx = find(plot_plan.trade_sell_mask);
-    sell_idx = sell_idx(sell_idx <= n);
+    if any(isfinite(PgbattPlan))
+        plot(t, PgbattPlan,  'b--', 'LineWidth', 1.2, 'DisplayName', 'Plan grid -> BESS');
+    end
 
-    if ~isempty(sell_idx)
-        plot(time_hours(sell_idx), buy_huf(sell_idx), 'r.', ...
-            'MarkerSize', 15, 'DisplayName', 'Kisütési ablak');
+    if any(isfinite(PpvloadPlan))
+        plot(t, PpvloadPlan, 'g-',  'LineWidth', 1.2, 'DisplayName', 'Plan PV -> load');
+    end
+
+    if any(isfinite(PpvbattPlan))
+        plot(t, PpvbattPlan, 'g--', 'LineWidth', 1.2, 'DisplayName', 'Plan PV -> BESS');
+    end
+
+    if any(isfinite(PbloadPlan))
+        plot(t, PbloadPlan,  'r-',  'LineWidth', 1.2, 'DisplayName', 'Plan BESS -> load');
+    end
+
+    if any(isfinite(PspillPlan))
+        plot(t, PspillPlan,  'm-',  'LineWidth', 1.2, 'DisplayName', 'Plan spill');
+    end
+
+    if any(isfinite(PoverPlan))
+        plot(t, PoverPlan,   'k--', 'LineWidth', 1.2, 'DisplayName', 'Plan over limit');
+    end
+
+    ylabel('P [kW]');
+    xlim([0 24]);
+    legend('Location', 'northeastoutside');
+
+    % =====================================================================
+    % 3) Ár és tényleges BESS működés
+    % =====================================================================
+    subplot(5,1,3); hold on; grid on;
+    title([day_label, ': ár és tényleges BESS működés']);
+
+    plot(t, buy, 'k-', 'LineWidth', 1.4, 'DisplayName', 'Vételi ár');
+
+    idxCh = find(PchActual > 1e-6);
+    idxDis = find(PdisActual > 1e-6);
+
+    if ~isempty(idxCh)
+        plot(t(idxCh), buy(idxCh), 'g.', ...
+            'MarkerSize', 12, 'DisplayName', 'Actual charge');
+    end
+
+    if ~isempty(idxDis)
+        plot(t(idxDis), buy(idxDis), 'r.', ...
+            'MarkerSize', 12, 'DisplayName', 'Actual discharge');
     end
 
     ylabel('Ár [HUF/kWh]');
@@ -542,111 +649,113 @@ function plot_final_day_detail_4y(full_result, pars, day_label)
     legend('Location', 'best');
 
     % =====================================================================
-    % 3) Hálózati import vs. lekötött teljesítmény
+    % 4) Grid actual vs planner
     % =====================================================================
-    subplot(5,1,3); hold on; grid on;
-    title([day_label, ': hálózatból felvett teljesítmény és contract']);
+    subplot(5,1,4); hold on; grid on;
+    title([day_label, ': grid actual vs planner']);
 
-    plot(time_hours, P_grid_import, 'k-', 'LineWidth', 1.5, ...
-        'DisplayName', 'Grid import actual');
+    plot(t, PgridImport, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Grid import actual');
 
-    if any(isfinite(P_grid_plan))
-        plot(time_hours, P_grid_plan, 'b--', 'LineWidth', 1.2, ...
-            'DisplayName', 'Grid import plan');
+    if any(isfinite(PgridPlan))
+        plot(t, PgridPlan, 'b--', 'LineWidth', 1.4, 'DisplayName', 'Grid import plan');
     end
 
-    yline(plot_plan.P_contract, 'r--', 'LineWidth', 1.5, ...
-        'DisplayName', 'Contract');
-
-    if isfinite(P_grid_limit)
-        yline(P_grid_limit, 'm--', 'LineWidth', 1.2, ...
-            'DisplayName', 'Planner grid limit');
+    if any(isfinite(PgridNet))
+        plot(t, PgridNet, 'c:', 'LineWidth', 1.1, 'DisplayName', 'Grid net actual');
     end
 
-    ylabel('Teljesítmény [kW]');
+    if isfinite(Pcontract)
+        yline(Pcontract, 'r--', 'LineWidth', 1.2, 'DisplayName', 'Contract');
+    end
+
+    if isfinite(PgridLimit)
+        yline(PgridLimit, 'm--', 'LineWidth', 1.2, 'DisplayName', 'Grid limit');
+    end
+
+    ylabel('P [kW]');
     xlim([0 24]);
     legend('Location', 'best');
 
     % =====================================================================
-    % 4) SOC és BESS teljesítmény
+    % 5) BESS, SOC, spill actual vs planner
     % =====================================================================
-    subplot(5,1,4); yyaxis left; hold on; grid on;
-    title([day_label, ': SOC és BESS teljesítmény']);
+    subplot(5,1,5); hold on; grid on;
+    title([day_label, ': BESS, SOC és spill actual vs planner']);
 
-    E_net_kWh = plot_res.E_stored(:) - plot_res.E_discharged(:);
-    SOC_approx = soc_start + cumsum(E_net_kWh) / pars.E_cap_nom;
+    yyaxis left;
 
-    plot(time_hours, SOC_approx * 100, 'b', 'LineWidth', 2, 'DisplayName', 'SOC actual');
+    plot(t, PbessActual, 'k-', 'LineWidth', 1.4, ...
+        'DisplayName', 'BESS actual (+dis / -ch)');
 
-    if isfield(plot_plan, 'SoC_plan')
-        soc_plan = local_get_plan_vector(plot_plan, 'SoC_plan', n, NaN);
-        plot(time_hours, soc_plan * 100, 'r--', 'LineWidth', 1.5, ...
+    plot(t, PbessPlan, 'r--', 'LineWidth', 1.2, ...
+        'DisplayName', 'BESS plan (+dis / -ch)');
+
+    plot(t, PspillActual, 'm-', 'LineWidth', 1.1, ...
+        'DisplayName', 'Spill actual');
+
+    if any(isfinite(PspillPlan))
+        plot(t, PspillPlan, 'm--', 'LineWidth', 1.1, ...
+            'DisplayName', 'Spill plan');
+    end
+
+    ylabel('P [kW]');
+
+    yyaxis right;
+
+    plot(t, SocActual * 100, 'b-', 'LineWidth', 1.5, ...
+        'DisplayName', 'SOC actual');
+
+    if any(isfinite(SocPlan))
+        plot(t, SocPlan * 100, 'c--', 'LineWidth', 1.2, ...
             'DisplayName', 'SOC plan');
     end
 
     ylabel('SOC [%]');
     ylim([0 100]);
 
-    yyaxis right;
-    bar(time_hours, P_bess_dc_plot, ...
-        'FaceColor', [0.3010 0.7450 0.9330], ...
-        'EdgeColor', 'none', 'BarWidth', 1, ...
-        'DisplayName', 'BESS P actual');
-
-    ylabel('BESS P [kW]');
+    xlabel('Idő [h]');
     xlim([0 24]);
-    legend('Location', 'best');
+    legend('Location', 'northeastoutside');
 
     % =====================================================================
-    % 5) Planner terv és tényleges végrehajtás összehasonlítása
+    % Konzolos összefoglaló
     % =====================================================================
-    subplot(5,1,5); hold on; grid on;
-    title([day_label, ': planner terv vs. tényleges végrehajtás']);
+    fprintf('\n--- FINAL DAY ACTUAL / PLAN SUMMARY ---\n');
+    fprintf('Day label: %s\n', day_label);
+    fprintf('Max grid import actual: %.3f kW\n', max(PgridImport));
+    fprintf('Max grid import plan:   %.3f kW\n', max(PgridPlan));
+    fprintf('Grid limit:             %.3f kW\n', PgridLimit);
+    fprintf('Max actual-limit:       %.3f kW\n', max(PgridImport - PgridLimit));
+    fprintf('Max plan-limit:         %.3f kW\n', max(PgridPlan - PgridLimit));
+    fprintf('Max BESS actual:        %.3f kW\n', max(PbessActual));
+    fprintf('Min BESS actual:        %.3f kW\n', min(PbessActual));
+    fprintf('Max BESS plan:          %.3f kW\n', max(PbessPlan));
+    fprintf('Min BESS plan:          %.3f kW\n', min(PbessPlan));
+    fprintf('---------------------------------------\n');
+end
 
-    plot(time_hours, P_grid_import, 'k-', 'LineWidth', 1.5, ...
-        'DisplayName', 'Grid actual');
 
-    if any(isfinite(P_grid_plan))
-        plot(time_hours, P_grid_plan, 'b--', 'LineWidth', 1.5, ...
-            'DisplayName', 'Grid plan');
+function v = local_plan_vec(plan, fieldName, n, defaultValue)
+
+    if isfield(plan, fieldName)
+        v = plan.(fieldName)(:);
+    else
+        v = defaultValue * ones(n, 1);
+        return;
     end
 
-    plot(time_hours, P_bess_actual, 'Color', [0.3010 0.7450 0.9330], ...
-        'LineWidth', 1.3, 'DisplayName', 'BESS actual (+dis / -ch)');
+    v = local_vec(v, n);
+end
 
-    plot(time_hours, P_bess_plan, 'r--', ...
-        'LineWidth', 1.3, 'DisplayName', 'BESS plan (+dis / -ch)');
 
-    yline(plot_plan.P_contract, 'r:', 'LineWidth', 1.3, ...
-        'DisplayName', 'Contract');
+function v = local_vec(x, n)
 
-    if isfinite(P_grid_limit)
-        yline(P_grid_limit, 'm:', 'LineWidth', 1.3, ...
-            'DisplayName', 'Planner grid limit');
-    end
+    v = x(:);
 
-    ylabel('Teljesítmény [kW]');
-    xlabel('Idő [óra]');
-    xlim([0 24]);
-    legend('Location', 'best');
-
-    % =====================================================================
-    % Konzolos gyors diagnosztika
-    % =====================================================================
-    if any(isfinite(P_grid_plan))
-        grid_err = P_grid_import(:) - P_grid_plan(:);
-
-        fprintf('\n--- FINAL DAY PLAN VS ACTUAL DEBUG ---\n');
-        fprintf('Day label: %s\n', day_label);
-        fprintf('Max grid actual:       %.2f kW\n', max(P_grid_import));
-        fprintf('Max grid plan:         %.2f kW\n', max(P_grid_plan));
-        fprintf('Max grid actual-plan:  %.2f kW\n', max(grid_err));
-        fprintf('Mean grid actual-plan: %.2f kW\n', mean(grid_err, 'omitnan'));
-        fprintf('Max BESS actual:       %.2f kW\n', max(P_bess_actual));
-        fprintf('Min BESS actual:       %.2f kW\n', min(P_bess_actual));
-        fprintf('Max BESS plan:         %.2f kW\n', max(P_bess_plan));
-        fprintf('Min BESS plan:         %.2f kW\n', min(P_bess_plan));
-        fprintf('-------------------------------------\n');
+    if numel(v) < n
+        v = [v; repmat(v(end), n - numel(v), 1)];
+    elseif numel(v) > n
+        v = v(1:n);
     end
 end
 

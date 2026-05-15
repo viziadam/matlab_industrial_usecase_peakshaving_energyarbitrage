@@ -49,32 +49,34 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     % =====================================================================
     step_res = struct();
     
-    % 7.1. Energiák és Fogyasztás (Aktuális BESS állapot szerint)
-    step_res.E_pv_dc        = P_pv_dc_kW .* dt_h;
-    step_res.E_load         = P_load_kW .* dt_h;
-    step_res.E_grid_import  = max(P_grid_final_kW, 0) .* dt_h;
-    step_res.E_grid_export  = abs(min(P_grid_final_kW, 0)) .* dt_h;
-    
-    % 7.2. Pénzügyek (Aktuális BESS állapot szerint)
-    step_res.Cost_import_HUF = step_res.E_grid_import .* Prices.buy_huf;
-    step_res.Rev_export_HUF  = step_res.E_grid_export .* Prices.sell_huf;
-    
-    % 7.3. Akku és DC sín adatok (Wh-ból kWh-ba váltva)
-    step_res.E_stored       = pack_out.E_stored / 1000;
-    step_res.E_discharged   = pack_out.E_discharged / 1000;
-    step_res.E_bess_dc      = P_bess_dc_actual_kW .* dt_h;
-    
-    % 7.4. Részletes Veszteség-analitika
-    step_res.E_loss_joule   = pack_out.E_loss_joule / 1000;
-    step_res.E_loss_dcdc    = (P_loss_dcdc_W / 1000) .* dt_h;
-    step_res.E_loss_inv     = P_loss_inv_kW .* dt_h;
-    step_res.E_clip_inv        = P_clip_kW .* dt_h; % Tényleges levágás BESS-szel
-    step_res.P_curtailment_kW  = P_clip_kW;
-    
-    % 7.5. Referencia (Baseline) Adatok - Ebből számoljuk a megtakarítást!
-    step_res.E_clip_base          = max((P_pv_dc_kW .* pars.inv_eta) - pars.P_inv_limit_ac, 0) .* dt_h;
-    step_res.E_grid_import_base   = max(P_grid_base_kW, 0) .* dt_h;
-    step_res.Cost_import_base_HUF = step_res.E_grid_import_base .* Prices.buy_huf;
+    % =====================================================================
+    % Egységes actual teljesítménymezők plothoz / diagnosztikához
+    % =====================================================================
+    P_grid_net_kW    = P_grid_final_kW;
+    P_grid_import_kW = max(P_grid_net_kW, 0);
+    P_grid_export_kW = max(-P_grid_net_kW, 0);
+
+    step_res.P_grid_net_kW = P_grid_net_kW(:);
+    step_res.P_grid_import_kW = P_grid_import_kW(:);
+    step_res.P_grid_export_kW = P_grid_export_kW(:);
+
+    % DC topológiában a BESS tényleges teljesítménye a DC busz oldali érték.
+    step_res.P_bess_actual_kW = P_bess_dc_actual_kW(:);
+    step_res.P_bess_dc_actual_kW = P_bess_dc_actual_kW(:);
+
+    % A DC rendszerben nincs külön PV AC ág, mert PV+BESS közös DC buszról
+    % megy a fő inverterre. Plothoz a tényleges inverter AC kimenetet mentjük.
+    step_res.P_inv_ac_kW = P_inv_ac_kW(:);
+
+    % Baseline PV inverter AC kimenet, BESS nélkül.
+    step_res.P_pv_ac_base_kW = P_inv_ac_base(:);
+
+    % Kompatibilis név: DC esetben ez nem tiszta PV ág,
+    % hanem a fő inverter tényleges AC kimenete.
+    step_res.P_pv_ac_kW = P_inv_ac_kW(:);
+
+    % DC esetben a tényleges "spill"/curtailment az inverter clipping.
+    step_res.P_spill_kW = P_clip_kW(:);
 
     % 7.6. Belső Állapotok (Nap végi profilokhoz / mentéshez)
     step_res.SoC            = pack_out.SOC(:);
