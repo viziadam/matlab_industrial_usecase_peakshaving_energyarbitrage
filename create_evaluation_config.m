@@ -71,13 +71,17 @@ function evalCfg = create_evaluation_config(cfg)
 
     % Ezt olvassa be az evaluation.
     % DC-csatolt futás esetén:
-    evalCfg.input.resultFilePath = fullfile(cfg.paths.results, 'results_dccoupled.mat');
+    evalCfg.input.resultFilePath = fullfile( ...
+        cfg.paths.results, ...
+        cfg.evaluation.resultFileName);
 
     % Ha AC-csatolt eredményt akarsz kiértékelni, akkor erre írd át:
     % evalCfg.input.resultFilePath = fullfile(cfg.paths.results, 'results_accoupled.mat');
 
     % Külön evaluation mappa.
-    evalCfg.output.baseFolder = fullfile(cfg.paths.figures, 'evaluation');
+    evalCfg.output.baseFolder = fullfile( ...
+        cfg.paths.results, ...
+        cfg.evaluation.resultFileName);
 
     if ~isfolder(evalCfg.output.baseFolder)
         mkdir(evalCfg.output.baseFolder);

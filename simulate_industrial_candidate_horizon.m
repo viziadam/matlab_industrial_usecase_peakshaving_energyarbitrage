@@ -309,6 +309,9 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     pars.bessCoupling = lower(string(cfg.system.bessCoupling));
     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
 
+    pars.objectiveMode = lower(string(cfg.dispatch.objectiveMode));
+    pars.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
+
     if cfg.sim.verbose
         fprintf('\n--- CANDIDATE PARAMETER DEBUG ---\n');
         fprintf('design.E_BESS_kWh     = %.3f\n', design.E_BESS_kWh);
@@ -327,21 +330,54 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     % =====================================================================
     % 2) Contract search
     % =====================================================================
-    search_cfg = local_build_contract_search_cfg(industrialCtx.search_cfg, cfg);
+    % search_cfg = local_build_contract_search_cfg(industrialCtx.search_cfg, cfg);
+    % 
+    % tSearch = tic;
+    % 
+    % search_result = search_optimal_contract_capacity( ...
+    %     day_cache, ...
+    %     industrialCtx.rep_set_proxy, ...
+    %     industrialCtx.rep_set_valid, ...
+    %     pars, ...
+    %     tariff, ...
+    %     search_cfg);
+    % 
+    % contractSearchRuntime_s = toc(tSearch);
+    % 
+    % best_contract_kW = search_result.best_contract_kW;
 
-    tSearch = tic;
+    objectiveMode = lower(string(cfg.dispatch.objectiveMode));
 
-    search_result = search_optimal_contract_capacity( ...
-        day_cache, ...
-        industrialCtx.rep_set_proxy, ...
-        industrialCtx.rep_set_valid, ...
-        pars, ...
-        tariff, ...
-        search_cfg);
+    switch objectiveMode
+        %energy-only modeban nincs optimalis kontrakt kereses
+        case "energy_only"
 
-    contractSearchRuntime_s = toc(tSearch);
+            best_contract_kW = cfg.dispatch.energyOnlyGridCap_kW;
 
-    best_contract_kW = search_result.best_contract_kW;
+            search_result = struct();
+            search_result.best_contract_kW = best_contract_kW;
+            search_result.mode = "energy_only_no_contract_search";
+
+            contractSearchRuntime_s = 0;
+
+        otherwise
+
+            search_cfg = local_build_contract_search_cfg(industrialCtx.search_cfg, cfg);
+
+            tSearch = tic;
+
+            search_result = search_optimal_contract_capacity( ...
+                day_cache, ...
+                industrialCtx.rep_set_proxy, ...
+                industrialCtx.rep_set_valid, ...
+                pars, ...
+                tariff, ...
+                search_cfg);
+
+            contractSearchRuntime_s = toc(tSearch);
+
+            best_contract_kW = search_result.best_contract_kW;
+    end
 
     % =====================================================================
     % 3) Full horizon simulation
@@ -413,20 +449,17 @@ end
 function search_cfg = local_build_contract_search_cfg(search_cfg_in, cfg)
 % LOCAL_BUILD_CONTRACT_SEARCH_CFG
 %
-% A contract search explicit konfiguracioja.
+% Contract search explicit konfiguracio.
 %
-% Itt szandekosan nincs alaperték-potlas. Minden mezot a kozponti cfg-bol
-% veszunk at, hogy hiany eseten a hiba latszodjon.
+% Itt nincs default ertekadas. Ha valamelyik cfg mezo hianyzik,
+% azonnal hibat kapunk.
 
     search_cfg = search_cfg_in;
 
     search_cfg.contract_min_kW = cfg.contractSearch.min_kW;
     search_cfg.contract_max_kW = cfg.contractSearch.max_kW;
 
-    % A kereso addig felezi az intervallumot, amig az intervallum a
-    % durva keresesi lepes merete ala nem er.
     search_cfg.final_interval_kW = cfg.contractSearch.coarse_step_kW;
-
     search_cfg.fine_step_kW = cfg.contractSearch.fine_step_kW;
     search_cfg.verbose = cfg.sim.verbose;
 
@@ -438,4 +471,7 @@ function search_cfg = local_build_contract_search_cfg(search_cfg_in, cfg)
         cfg.dispatch.P_contract_safety_factor;
 
     search_cfg.dispatch.target_step_min = cfg.targetStepMin;
+
+    search_cfg.dispatch.objectiveMode = cfg.dispatch.objectiveMode;
+    search_cfg.dispatch.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
 end

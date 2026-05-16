@@ -15,10 +15,15 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 1) System
     % =====================================================================
-    cfg.system.bessCoupling = "ac"; 
-    % Később:
-    %   "dc" -> DC-csatolt ipari dispatch
-    %   "ac" -> AC-csatolt ipari dispatch
+    % bessCoupling modes: "dc", "ac"
+    cfg.system.bessCoupling = "dc"; 
+    
+    % objectiveMode options: "peak_only" , "energy_only", "combined"
+    cfg.dispatch.objectiveMode = "combined";
+    %grid limit
+    cfg.dispatch.energyOnlyGridCap_kW = 1000;
+    cfg.dispatch.peakOnlyDisableEnergyCost = true;
+
 
     cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
@@ -166,20 +171,32 @@ function cfg = create_configurations(basePath)
     cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
 
-    cfg.diagnostics.candidateIndex = 2;
+    cfg.diagnostics.candidateIndex = 5;
+    if cfg.diagnostics.enabled
+        cfg.diagnostics.storeCandidateDetail = false;
+        cfg.diagnostics.storePlannerDebug = true;
+        cfg.diagnostics.makePlots = true;
+        cfg.diagnostics.saveFigures = true;
+        cfg.diagnostics.closeFiguresAfterSave = false;
+        cfg.diagnostics.printPlannerDebug = false;
+        cfg.diagnostics.maxPrintedDebugDays = 15;
 
-    cfg.diagnostics.storeCandidateDetail = false;
-    cfg.diagnostics.storePlannerDebug = true;
-    cfg.diagnostics.makePlots = true;
-    cfg.diagnostics.saveFigures = true;
-    cfg.diagnostics.closeFiguresAfterSave = false;
-    cfg.diagnostics.printPlannerDebug = true;
-    cfg.diagnostics.maxPrintedDebugDays = 15;
+        cfg.diagnostics.makePlannerExecutionDebugPlot = true;
+        cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
+        cfg.diagnostics.makeDispatchDiagnosticPlots = true;
+    else
+        cfg.diagnostics.storeCandidateDetail = false;
+        cfg.diagnostics.storePlannerDebug = false;
+        cfg.diagnostics.makePlots = false;
+        cfg.diagnostics.saveFigures = false;
+        cfg.diagnostics.closeFiguresAfterSave = false;
+        cfg.diagnostics.printPlannerDebug = false;
+        cfg.diagnostics.maxPrintedDebugDays = 15;
 
-    cfg.diagnostics.makePlannerExecutionDebugPlot = true;
-    cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
-    cfg.diagnostics.makeDispatchDiagnosticPlots = true;
-
+        cfg.diagnostics.makePlannerExecutionDebugPlot = false;
+        cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
+        cfg.diagnostics.makeDispatchDiagnosticPlots = false;
+    end
     cfg.diagnostics.runEvaluation = true;
     cfg.diagnostics.outputFolder = fullfile(cfg.paths.results, 'diagnostics');
 

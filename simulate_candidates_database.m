@@ -267,7 +267,31 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                     'yearlyResult', ...
                     '-v7.3');
             end
-     end
+     
+    end
+    % =====================================================================
+    % Normal full-sweep evaluation
+    % =====================================================================
+    if ~diagnosticMode && ...
+        isfield(cfg, 'evaluation') && ...
+        isfield(cfg.evaluation, 'runAfterSimulation') && ...
+        cfg.evaluation.runAfterSimulation
+
+        evalCfg = create_evaluation_config(cfg);
+
+        evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+
+        if isfield(cfg.evaluation, 'saveEvaluationResult') && ...
+            cfg.evaluation.saveEvaluationResult
+
+            save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), ...
+                'evaluationResult', ...
+                '-v7.3');
+        end
+
+        fprintf('\nFull evaluation saved:\n%s\n', ...
+            fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
+    end
 end
 
 

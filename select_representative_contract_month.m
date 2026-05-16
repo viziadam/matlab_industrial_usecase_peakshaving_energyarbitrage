@@ -1,18 +1,25 @@
 function month_selection = select_representative_contract_month(day_cache)
 % SELECT_REPRESENTATIVE_CONTRACT_MONTH
 %
-% Teljes, 30 napos honapok kozul valaszt reprezentans honapot.
+% Contract search-hoz hasznalt reprezentans/stressz honap valasztasa.
 %
-% A modszer:
-%   1) a day_cache abs_day mezoje alapjan 30 napos honapblokkokat kepez,
-%   2) csak teljes 30 napos honapokat enged be,
-%   3) minden honapra feature-vektort szamol,
-%   4) a feature-eket standardizalja,
-%   5) a standardizalt feature-ter median honapprofiljahoz legkozelebbi
-%      honapot valasztja.
+% Ez a verzio nem atlagos honapot valaszt, hanem olyan teljes 30 napos
+% honapot, amelynek a havi legnagyobb no-BESS grid peak erteke kozel van
+% a havi maximum peak-ek 90. percentilisehez.
 %
-% Ez medoid jellegu valasztas: nem atlaghonapot general, hanem egy valodi,
-% tenylegesen letezo honapot ad vissza.
+% Cel:
+%   - ne egy atlagos honap alapjan legyen P_contract valasztas,
+%   - de ne is a teljesen extrem outlier honap dominaljon,
+%   - hanem egy magas terhelesu, robusztus stressz honap legyen az alap.
+%
+% Hasznalt peak:
+%   day_cache(i).no_bess_peak
+%
+% Ez a BESS nelkuli napi halozati importcsucs, tehat contract sizing
+% szempontbol jobb, mint a sima load peak.
+
+    target_percentile = 100;
+    month_days = 30;
 
     abs_days = [day_cache.abs_day];
     month_ids_all = arrayfun(@local_get_month_id_from_abs_day, abs_days);
@@ -21,147 +28,135 @@ function month_selection = select_representative_contract_month(day_cache)
     month_rows = struct( ...
         'month_id', {}, ...
         'day_indices', {}, ...
-        'features', {});
+        'max_no_bess_peak_kW', {}, ...
+        'p90_no_bess_peak_kW', {}, ...
+        'p95_no_bess_peak_kW', {}, ...
+        'mean_no_bess_peak_kW', {}, ...
+        'grid_no_bess_energy_kWh', {}, ...
+        'score', {});
 
+    % =====================================================================
+    % 1) Teljes 30 napos honapok osszegyujtese
+    % =====================================================================
     for i = 1:numel(month_ids)
 
         month_id = month_ids(i);
         day_indices = find(month_ids_all == month_id);
 
-        if numel(day_indices) == 30
-
-            row = struct();
-            row.month_id = month_id;
-            row.day_indices = day_indices;
-            row.features = local_month_features(day_cache, day_indices);
-
-            month_rows(end + 1) = row; %#ok<AGROW>
+        if numel(day_indices) ~= month_days
+            continue;
         end
+
+        row = local_build_month_peak_row(day_cache, month_id, day_indices);
+        month_rows(end + 1) = row; %#ok<AGROW>
     end
 
     if isempty(month_rows)
         error('Nincs teljes 30 napos honap a day_cache strukturaban.');
     end
 
-    X = vertcat(month_rows.features);
+    % =====================================================================
+    % 2) Cel peak meghatarozasa
+    % =====================================================================
+    monthly_max_peaks = [month_rows.max_no_bess_peak_kW];
 
-    feature_names = local_month_feature_names();
-    [Z, active_feature_mask] = local_standardize_month_features(X);
+    target_peak_kW = prctile(monthly_max_peaks, target_percentile);
 
-    target = median(Z, 1);
-    score = sum((Z - target).^2, 2);
+    % =====================================================================
+    % 3) A target peakhez legkozelebbi honap valasztasa
+    % =====================================================================
+    for i = 1:numel(month_rows)
 
-    [best_score, idx_best] = min(score);
+        peak_error = abs(month_rows(i).max_no_bess_peak_kW - target_peak_kW);
 
+        % Masodlagos szempont:
+        % ha ket honap max peakje hasonloan kozel van a targethez,
+        % akkor az legyen jobb, amelyiknek a napi peak eloszlasa is magasabb.
+        %
+        % Ez elkeruli, hogy egyetlen tuskeszeru nap miatt valasszunk honapot.
+        robustness_bonus = 0.05 * month_rows(i).p90_no_bess_peak_kW;
+
+        month_rows(i).score = peak_error - robustness_bonus;
+    end
+
+    [best_score, idx_best] = min([month_rows.score]);
+
+    selected = month_rows(idx_best);
+
+    % =====================================================================
+    % 4) Kimenet
+    % =====================================================================
     month_selection = struct();
 
-    month_selection.month_id = month_rows(idx_best).month_id;
-    month_selection.day_indices = month_rows(idx_best).day_indices;
+    month_selection.selection_mode = 'monthly_max_peak_near_p90';
+    month_selection.target_percentile = target_percentile;
+    month_selection.target_peak_kW = target_peak_kW;
+
+    month_selection.month_id = selected.month_id;
+    month_selection.day_indices = selected.day_indices;
     month_selection.score = best_score;
 
-    month_selection.feature_matrix = X;
-    month_selection.feature_names = feature_names;
-    month_selection.active_feature_mask = active_feature_mask;
+    month_selection.selected_max_no_bess_peak_kW = selected.max_no_bess_peak_kW;
+    month_selection.selected_p90_no_bess_peak_kW = selected.p90_no_bess_peak_kW;
+    month_selection.selected_p95_no_bess_peak_kW = selected.p95_no_bess_peak_kW;
+    month_selection.selected_mean_no_bess_peak_kW = selected.mean_no_bess_peak_kW;
+    month_selection.selected_grid_no_bess_energy_kWh = selected.grid_no_bess_energy_kWh;
 
     month_selection.all_month_ids = [month_rows.month_id];
-    month_selection.all_scores = score(:).';
+    month_selection.all_month_max_no_bess_peak_kW = [month_rows.max_no_bess_peak_kW];
+    month_selection.all_month_p90_no_bess_peak_kW = [month_rows.p90_no_bess_peak_kW];
+    month_selection.all_month_p95_no_bess_peak_kW = [month_rows.p95_no_bess_peak_kW];
+    month_selection.all_scores = [month_rows.score];
+
+    fprintf('\n--- Representative contract month selected ---\n');
+    fprintf('Selection mode: monthly max no-BESS peak near P%d\n', target_percentile);
+    fprintf('Target peak: %.2f kW\n', target_peak_kW);
+    fprintf('Selected month id: %d\n', month_selection.month_id);
+    fprintf('Selected days: %d ... %d\n', ...
+        day_cache(month_selection.day_indices(1)).abs_day, ...
+        day_cache(month_selection.day_indices(end)).abs_day);
+    fprintf('Selected max no-BESS peak: %.2f kW\n', ...
+        month_selection.selected_max_no_bess_peak_kW);
+    fprintf('Selected p90 no-BESS daily peak: %.2f kW\n', ...
+        month_selection.selected_p90_no_bess_peak_kW);
+    fprintf('Selected p95 no-BESS daily peak: %.2f kW\n', ...
+        month_selection.selected_p95_no_bess_peak_kW);
+    fprintf('----------------------------------------------\n');
 end
 
 
-function feature_row = local_month_features(day_cache, day_indices)
-% LOCAL_MONTH_FEATURES
+function row = local_build_month_peak_row(day_cache, month_id, day_indices)
+% LOCAL_BUILD_MONTH_PEAK_ROW
 %
-% Egy teljes honap jellemzoi.
-%
-% A feature-ek ugy vannak valasztva, hogy a contract-kereses szempontjabol
-% lenyeges tenyezoket fedjek le:
-%   - energiaigeny,
-%   - PV-termeles,
-%   - BESS nelkuli halozati energia,
-%   - napi csucsok,
-%   - arszint,
-%   - napi aringadozas.
-
-    load_energy_kWh = 0;
-    pv_energy_kWh = 0;
-    grid_no_bess_energy_kWh = 0;
+% Egy teljes honap contract-sizing szempontu peak jellemzoit szamolja.
 
     no_bess_peaks = zeros(numel(day_indices), 1);
-    load_peaks = zeros(numel(day_indices), 1);
-    price_mean_days = zeros(numel(day_indices), 1);
-    price_spread_days = zeros(numel(day_indices), 1);
+    grid_no_bess_energy_kWh = 0;
 
     for kk = 1:numel(day_indices)
 
-        dc = day_cache(day_indices(kk));
-
-        P_load = dc.P_load_actual(:);
-        P_pv = dc.P_pv_dc_actual(:);
-        P_grid_no_bess = dc.P_grid_no_bess_day(:);
-        buy_price = dc.Prices_today.buy_huf(:);
-
-        load_energy_kWh = load_energy_kWh + sum(P_load) * dc.dt_h;
-        pv_energy_kWh = pv_energy_kWh + sum(P_pv) * dc.dt_h;
-        grid_no_bess_energy_kWh = grid_no_bess_energy_kWh + ...
-            sum(P_grid_no_bess) * dc.dt_h;
+        day_idx = day_indices(kk);
+        dc = day_cache(day_idx);
 
         no_bess_peaks(kk) = dc.no_bess_peak;
-        load_peaks(kk) = max(P_load);
 
-        price_mean_days(kk) = mean(buy_price);
-        price_spread_days(kk) = max(buy_price) - min(buy_price);
+        grid_no_bess_energy_kWh = grid_no_bess_energy_kWh + ...
+            sum(dc.P_grid_no_bess_day(:)) * dc.dt_h;
     end
 
-    feature_row = [ ...
-        load_energy_kWh, ...
-        pv_energy_kWh, ...
-        grid_no_bess_energy_kWh, ...
-        max(load_peaks), ...
-        max(no_bess_peaks), ...
-        prctile(no_bess_peaks, 95), ...
-        mean(no_bess_peaks), ...
-        mean(price_mean_days), ...
-        mean(price_spread_days)];
-end
+    row = struct();
 
+    row.month_id = month_id;
+    row.day_indices = day_indices;
 
-function feature_names = local_month_feature_names()
+    row.max_no_bess_peak_kW = max(no_bess_peaks);
+    row.p90_no_bess_peak_kW = prctile(no_bess_peaks, 90);
+    row.p95_no_bess_peak_kW = prctile(no_bess_peaks, 95);
+    row.mean_no_bess_peak_kW = mean(no_bess_peaks);
 
-    feature_names = { ...
-        'load_energy_kWh', ...
-        'pv_energy_kWh', ...
-        'grid_no_bess_energy_kWh', ...
-        'max_load_peak_kW', ...
-        'max_no_bess_peak_kW', ...
-        'p95_no_bess_daily_peak_kW', ...
-        'mean_no_bess_daily_peak_kW', ...
-        'mean_buy_price_huf_per_kWh', ...
-        'mean_daily_price_spread_huf_per_kWh'};
-end
+    row.grid_no_bess_energy_kWh = grid_no_bess_energy_kWh;
 
-
-function [Z, active_feature_mask] = local_standardize_month_features(X)
-% LOCAL_STANDARDIZE_MONTH_FEATURES
-%
-% Standardizalas csak a valtozo feature-oszlopokra.
-%
-% Ha egy feature minden honapban azonos, akkor nem segit a honapok
-% megkulonbozteteseben. Ezert azt nem hasznaljuk a tavolsagszamitasban.
-
-    mu = mean(X, 1);
-    sigma = std(X, 0, 1);
-
-    active_feature_mask = sigma > 1e-12;
-
-    if ~any(active_feature_mask)
-        error('A havi feature-matrix egyetlen valtozo oszlopot sem tartalmaz.');
-    end
-
-    X_active = X(:, active_feature_mask);
-    mu_active = mu(active_feature_mask);
-    sigma_active = sigma(active_feature_mask);
-
-    Z = (X_active - mu_active) ./ sigma_active;
+    row.score = NaN;
 end
 
 
