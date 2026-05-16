@@ -223,13 +223,6 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     A = [A; AGrid];
     b = [b; bGrid];
 
-    % Horizon vegen SoC ne legyen kisebb, mint az indulo SoC.
-    rowTerminalSoc = zeros(1, nVars);
-    rowTerminalSoc(iSoc(N)) = -1;
-
-    A = [A; rowTerminalSoc];
-    b = [b; -SoC0];
-
     % =====================================================================
     % Korlatok
     % =====================================================================
