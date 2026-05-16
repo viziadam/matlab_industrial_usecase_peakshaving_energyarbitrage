@@ -71,7 +71,12 @@ function local_plot_embedded_dispatch_diagnostics(cfg, candidateIndex, design, s
     % =====================================================================
     % Régi run_simulation_diagnostics plotok
     % =====================================================================
-    plot_contract_search_summary_4y(simSummary.search_result);
+    if local_has_contract_search_history(simSummary.search_result)
+        plot_contract_search_summary_4y(simSummary.search_result);
+    else
+        fprintf('Contract search summary plot skipped: no contract search history available. Mode: %s\n', ...
+            string(simSummary.search_result.mode));
+    end
 
     plot_full_horizon_summary_4y( ...
         full_result, ...
@@ -869,13 +874,39 @@ function plot_final_day_detail_4y(full_result, pars, day_label)
     % =====================================================================
     % Első ábra vizuális teljesítményfelosztása
     % =====================================================================
-    PpvToLoad = min(PpvActual, load);
-    remainingLoad = max(load - PpvToLoad, 0);
+    % Az első subplot célja:
+    %   load = PV->fogyasztás + BESS->fogyasztás + hálózat->fogyasztás
+    %
+    % Fontos:
+    %   - ide csak nemnegatív, fogyasztást ellátó komponensek kerülnek;
+    %   - a BESS töltés nem része a stacknek, hanem külön vonal;
+    %   - a hálózati import lehet nagyobb, mint a hálózat->fogyasztás,
+    %     mert tartalmazhat hálózat->BESS töltést is.
 
-    PbessToLoad = min(PdisActual, remainingLoad);
-    remainingLoad = max(remainingLoad - PbessToLoad, 0);
+    PloadPlot = max(load(:), 0);
 
-    PgridToLoad = min(PgridImport, remainingLoad);
+    PpvAvailablePlot = max(PpvActual(:), 0);
+    PdisPlot = max(PdisActual(:), 0);
+    PchPlot = max(PchActual(:), 0);
+
+    % 1) PV először közvetlenül a fogyasztást fedezi.
+    PpvToLoad = min(PpvAvailablePlot, PloadPlot);
+
+    % 2) A maradék fogyasztást fedezheti a BESS kisütés.
+    remainingLoad = max(PloadPlot - PpvToLoad, 0);
+    PbessToLoad = min(PdisPlot, remainingLoad);
+
+    % 3) Ami ezután marad, azt a hálózat fedezi.
+    remainingLoad = max(PloadPlot - PpvToLoad - PbessToLoad, 0);
+    PgridToLoad = remainingLoad;
+
+    % Numerikus zaj levágása.
+    plotTol = 1e-8;
+
+    PpvToLoad(PpvToLoad < plotTol) = 0;
+    PbessToLoad(PbessToLoad < plotTol) = 0;
+    PgridToLoad(PgridToLoad < plotTol) = 0;
+    PchPlot(PchPlot < plotTol) = 0;
 
     % =====================================================================
     % Figure
@@ -900,12 +931,12 @@ function plot_final_day_detail_4y(full_result, pars, day_label)
     h(3).FaceColor = [0.6350 0.0780 0.1840];
     h(3).DisplayName = 'Hálózat -> fogyasztás';
 
-    plot(t, PchActual, ...
+    plot(t, PchPlot, ...
         'Color', [0.9290 0.6940 0.1250], ...
         'LineWidth', 2, ...
         'DisplayName', 'BESS töltés');
 
-    plot(t, load, 'k-', ...
+    plot(t, PloadPlot, 'k-', ...
         'LineWidth', 1.3, ...
         'DisplayName', 'Összes fogyasztás');
 
@@ -1252,4 +1283,16 @@ function plot_planner_execution_debug(full_result)
     xlabel('day index');
     title('MILP exitflag');
     legend('Location', 'best');
+end
+
+function tf = local_has_contract_search_history(search_result)
+
+    tf = ...
+        isstruct(search_result) && ...
+        isfield(search_result, 'proxy_history') && ...
+        isstruct(search_result.proxy_history) && ...
+        isfield(search_result.proxy_history, 'history') && ...
+        ~isempty(search_result.proxy_history.history) && ...
+        isfield(search_result, 'validation_results') && ...
+        ~isempty(search_result.validation_results);
 end

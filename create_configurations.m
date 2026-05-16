@@ -19,7 +19,7 @@ function cfg = create_configurations(basePath)
     cfg.system.bessCoupling = "dc"; 
     
     % objectiveMode options: "peak_only" , "energy_only", "combined"
-    cfg.dispatch.objectiveMode = "combined";
+    cfg.dispatch.objectiveMode = "energy_only";
     %grid limit
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
