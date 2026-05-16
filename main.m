@@ -1,4 +1,22 @@
-function DB = main()
+function runResult = main()
+% MAIN
+%
+% A create_configurations.m-ben kivalasztott mukodesi modra lefuttatja
+% mindket topologiat:
+%   - DC-csatolt PV+BESS
+%   - AC-csatolt PV+BESS
+%
+% Mukodesi mod:
+%   cfg.dispatch.objectiveMode = "peak_only" | "energy_only" | "combined"
+%
+% Diagnosztikai mod:
+%   ha cfg.diagnostics.enabled = true, akkor mindket topologiara lefut
+%   a baseline + cfg.diagnostics.candidateIndex lista.
+%
+% Teljes futas:
+%   ha cfg.diagnostics.enabled = false, akkor mindket topologiara lefut
+%   a teljes candidate sweep, majd elkeszul az AC/DC osszehasonlito
+%   evaluation is.
 
     clc;
     close all;
@@ -7,30 +25,27 @@ function DB = main()
 
     cfg = create_configurations(basePath);
 
-    data = build_data(cfg);
+    objectiveMode = lower(string(cfg.dispatch.objectiveMode));
 
-    industrialCtx = prepare_industrial_simulation_context(data, cfg);
-
-    DB = init_candidate_database_structures(data, cfg);
-
-    DB.industrialCtxInfo = industrialCtx.info;
-
-    DB = simulate_candidates_database(data, DB, cfg, industrialCtx);
-
-    save_candidates_database(DB, cfg);
-
-    fprintf('\nIndustrial PV+BESS candidate database simulation finished.\n');
-    fprintf('Coupling: %s\n', string(cfg.system.bessCoupling));
-    fprintf('Candidates in database: %d\n', height(DB.candidateTable));
+    diagnosticCandidateIndex = [];
 
     if isfield(cfg, 'diagnostics') && ...
        isfield(cfg.diagnostics, 'enabled') && ...
        cfg.diagnostics.enabled
 
-        fprintf('Diagnostic mode was active. Normal evaluation was handled in simulate_candidates_database.\n');
-        return;
+        diagnosticCandidateIndex = cfg.diagnostics.candidateIndex;
     end
 
-    evalCfg = create_evaluation_config(cfg);
-    evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+    runResult = run_all_topologies_for_mode( ...
+        objectiveMode, ...
+        diagnosticCandidateIndex);
+
+    fprintf('\nIndustrial PV+BESS AC/DC simulation finished.\n');
+    fprintf('Objective mode: %s\n', objectiveMode);
+
+    if isempty(diagnosticCandidateIndex)
+        fprintf('Run type: full sweep. AC/DC comparison was created.\n');
+    else
+        fprintf('Run type: diagnostic. Selected candidates were simulated for AC and DC.\n');
+    end
 end
