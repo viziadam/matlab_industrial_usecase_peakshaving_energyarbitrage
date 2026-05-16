@@ -1,28 +1,19 @@
-
 function plan = ems_day_ahead_planner_milp_contract_ac( ...
     P_load_f, P_pv_dc_f, Prices, pars, tariff, dt_h, contract_state, maxSolverTime_s)
 % EMS_DAY_AHEAD_PLANNER_MILP_CONTRACT_AC
 %
 % AC-csatolt PV+BESS MILP planner.
 %
-% Felbontott AC energiaáramok:
-%   PgL     grid -> load
-%   PgB     grid -> BESS
-%   PpvL    PV   -> load
-%   PpvB    PV   -> BESS
-%   PbL     BESS -> load
-%   Pspill  nem hasznosított PV
-%   Pover   P_grid_limit feletti hálózati import
+% Szigoru grid-limit logika:
+%   PgL + PgB <= P_grid_limit
 %
-% Egyenletek:
-%   PgL + PpvL + PbL = Pload
-%   PpvL + PpvB + Pspill = Ppv_ac
-%
-% Soft grid-limit:
-%   PgL + PgB - Pover <= P_grid_limit
-%   Pover >= 0
-%
-% Vagyis a limit túlléphető, de minden időlépésben büntetett.
+% Fontos:
+%   - nincs Pover = 0 trukk;
+%   - Pover nem dontesi valtozo;
+%   - a hatar feletti reszt a megoldas utan szamitjuk diagnosztikai
+%     celra: max(Pgrid - P_grid_limit, 0);
+%   - ha a terheles/PV/BESS korlatok mellett a grid-limit nem tarthato,
+%     az intlinprog infeasible megoldast ad, a plan pedig is_feasible = false.
 
     if nargin < 8
         maxSolverTime_s = 15;
@@ -40,19 +31,17 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     for k = 1:numel(requiredParsFields)
         if ~isfield(pars, requiredParsFields{k})
-            error('Hiányzó pars mező az AC MILP-ben: pars.%s', requiredParsFields{k});
+            error('Hianyzo pars mezo az AC MILP-ben: pars.%s', requiredParsFields{k});
         end
     end
 
     requiredTariffFields = { ...
         'distribution_energy_rate_huf_per_kWh', ...
-        'transmission_energy_rate_huf_per_kWh', ...
-        'penalty_rate_huf_per_kW_year', ...
-        'months_in_year'};
+        'transmission_energy_rate_huf_per_kWh'};
 
     for k = 1:numel(requiredTariffFields)
         if ~isfield(tariff, requiredTariffFields{k})
-            error('Hiányzó tariff mező az AC MILP-ben: tariff.%s', requiredTariffFields{k});
+            error('Hianyzo tariff mezo az AC MILP-ben: tariff.%s', requiredTariffFields{k});
         end
     end
 
@@ -62,12 +51,13 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     for k = 1:numel(requiredContractFields)
         if ~isfield(contract_state, requiredContractFields{k})
-            error('Hiányzó contract_state mező az AC MILP-ben: contract_state.%s', requiredContractFields{k});
+            error('Hianyzo contract_state mezo az AC MILP-ben: contract_state.%s', ...
+                requiredContractFields{k});
         end
     end
 
     if ~isfield(Prices, 'buy_huf')
-        error('Hiányzó Prices.buy_huf az AC MILP-ben.');
+        error('Hianyzo Prices.buy_huf az AC MILP-ben.');
     end
 
     Pload = P_load_f(:);
@@ -77,7 +67,7 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     N = numel(Pload);
 
     if numel(Ppvdc) ~= N || numel(buy) ~= N
-        error('AC MILP bemeneti vektorhossz eltérés.');
+        error('AC MILP bemeneti vektorhossz elteres.');
     end
 
     if isfield(pars, 'SoC_initial')
@@ -89,7 +79,7 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     socTol = 1e-4;
 
     if SoC0 < pars.SoC_min - socTol || SoC0 > pars.SoC_max + socTol
-        error(['AC MILP induló SoC kívül van a megengedett tartományon. ', ...
+        error(['AC MILP indulo SoC kivul van a megengedett tartomanyon. ', ...
             'SoC0 = %.8f, SoC_min = %.8f, SoC_max = %.8f'], ...
             SoC0, pars.SoC_min, pars.SoC_max);
     end
@@ -127,15 +117,8 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         + tariff.distribution_energy_rate_huf_per_kWh ...
         + tariff.transmission_energy_rate_huf_per_kWh;
 
-    % Időlépésre fajlagosított túllépési büntetés.
-    % Egység:
-    %   penalty_rate_huf_per_kW_year [HUF/kW/year]
-    %   dt_h / (365*24)              [year]
-    %   => HUF/kW per timestep
-    cOver = tariff.penalty_rate_huf_per_kW_year / (12*30);
-
     % =====================================================================
-    % Döntési változók
+    % Dontesi valtozok
     % =====================================================================
     n = 0;
 
@@ -145,14 +128,13 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     iPpvB   = n + (1:N); n = n + N;
     iPbL    = n + (1:N); n = n + N;
     iPspill = n + (1:N); n = n + N;
-    iPover  = n + (1:N); n = n + N;
     iSoc    = n + (1:N); n = n + N;
     iMode   = n + (1:N); n = n + N;
 
     nVars = n;
 
     % =====================================================================
-    % Célfüggvény
+    % Celfuggveny
     % =====================================================================
     f = zeros(nVars, 1);
 
@@ -160,16 +142,10 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     f(iPgB)   = buyTotal * dt_h + cCh * dt_h;
     f(iPpvB)  = cCh * dt_h;
     f(iPbL)   = cDis * dt_h;
-    f(iPover) = cOver;
-
-    % PpvL és Pspill költsége 0.
 
     % =====================================================================
-    % Egyenlőségek
+    % Egyenlosegek
     % =====================================================================
-
-    % Load:
-    %   PgL + PpvL + PbL = Pload
     AeqLoad = zeros(N, nVars);
     beqLoad = Pload;
 
@@ -179,8 +155,6 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         AeqLoad(t, iPbL(t))  = 1;
     end
 
-    % PV:
-    %   PpvL + PpvB + Pspill = Ppv
     AeqPv = zeros(N, nVars);
     beqPv = Ppv;
 
@@ -190,9 +164,6 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         AeqPv(t, iPspill(t)) = 1;
     end
 
-    % SoC:
-    %   SoC(1) = SoC0
-    %   SoC(t) = SoC(t-1) + etaCh*(PgB+PpvB)*dt/E - PbL*dt/(etaDis*E)
     AeqSoc = zeros(N, nVars);
     beqSoc = zeros(N, 1);
 
@@ -214,12 +185,12 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     beq = [beqLoad; beqPv; beqSoc];
 
     % =====================================================================
-    % Egyenlőtlenségek
+    % Egyenlotlensegek
     % =====================================================================
     A = [];
     b = [];
 
-    % Töltés / kisütés kizárás:
+    % Toltes / kisutes kizaras:
     %   PgB + PpvB <= PchMax * mode
     %   PbL <= PdisMax * (1 - mode)
     AMode = zeros(2*N, nVars);
@@ -238,22 +209,29 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     A = [A; AMode];
     b = [b; bMode];
 
-    % Soft grid-limit:
-    %   PgL + PgB - Pover <= Plimit
+    % Szigoru grid-limit:
+    %   PgL + PgB <= Plimit
+    % Ez nem Pover-nullazas, hanem kozvetlen fizikai importkorlat.
     AGrid = zeros(N, nVars);
     bGrid = Plimit * ones(N, 1);
 
     for t = 1:N
-        AGrid(t, iPgL(t))   =  1;
-        AGrid(t, iPgB(t))   =  1;
-        AGrid(t, iPover(t)) = -1;
+        AGrid(t, iPgL(t)) = 1;
+        AGrid(t, iPgB(t)) = 1;
     end
 
     A = [A; AGrid];
     b = [b; bGrid];
 
+    % Horizon vegen SoC ne legyen kisebb, mint az indulo SoC.
+    rowTerminalSoc = zeros(1, nVars);
+    rowTerminalSoc(iSoc(N)) = -1;
+
+    A = [A; rowTerminalSoc];
+    b = [b; -SoC0];
+
     % =====================================================================
-    % Korlátok
+    % Korlatok
     % =====================================================================
     lb = zeros(nVars, 1);
     ub = inf(nVars, 1);
@@ -263,8 +241,6 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     lb(iMode) = 0;
     ub(iMode) = 1;
-
-    % ub(iPover) = 0;
 
     intcon = iMode;
 
@@ -281,7 +257,7 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     [x, fval, exitflag] = intlinprog( ...
         f, intcon, A, b, Aeq, beq, lb, ub, options);
 
-    if isempty(x) || exitflag <= 0
+    if isempty(x) || exitflag <= 0 || ~isfinite(fval)
         plan = local_infeasible_ac_plan( ...
             N, Pcontract, safety, Plimit, PmonthOld, SoC0, exitflag);
         return;
@@ -296,13 +272,13 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     PpvB   = x(iPpvB);
     PbL    = x(iPbL);
     Pspill = x(iPspill);
-    Pover  = x(iPover);
     SoC    = x(iSoc);
 
     Pgrid = PgL + PgB;
     Pch   = PgB + PpvB;
     Pdis  = PbL;
 
+    Pover = max(Pgrid - Plimit, 0);
     Ppeak = max(PmonthOld, max(Pgrid));
 
     plan = struct();
@@ -316,9 +292,6 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     plan.P_month_max_so_far = PmonthOld;
     plan.P_month_peak_candidate = Ppeak;
-
-    % Most már nem havi peak-hez viszonyított inkrementum,
-    % hanem a P_grid_limit feletti legnagyobb időlépéses túllépés.
     plan.P_overrun_increment_kW = max(Pover);
 
     plan.trade_buy_mask  = (Pch  > 1e-6).';
@@ -336,6 +309,7 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     plan.P_bload_plan  = PbL(:);
     plan.P_spill_plan  = Pspill(:);
     plan.P_over_plan   = Pover(:);
+    plan.P_over_step_plan = Pover(:);
     plan.P_pv_ac_plan  = Ppv(:);
 
     plan.SoC_plan = SoC(:);
@@ -353,16 +327,14 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         sum(cCh  .* Pch(:))  * dt_h + ...
         sum(cDis .* Pdis(:)) * dt_h;
 
-    overrunCost = sum(Pover(:)) * cOver;
-
     plan.economics.energy_cost_market = energyMarket;
     plan.economics.energy_cost_network = energyNetwork;
     plan.economics.energy_cost_total = energyMarket + energyNetwork;
     plan.economics.degradation_cost = degradationCost;
     plan.economics.spill_cost = 0;
-    plan.economics.overrun_increment_cost = overrunCost;
+    plan.economics.overrun_increment_cost = 0;
     plan.economics.net_cost_operational = ...
-        energyMarket + energyNetwork + degradationCost + overrunCost;
+        energyMarket + energyNetwork + degradationCost;
 end
 
 
@@ -397,6 +369,7 @@ function plan = local_infeasible_ac_plan( ...
     plan.P_bload_plan  = zeros(N, 1);
     plan.P_spill_plan  = zeros(N, 1);
     plan.P_over_plan   = inf(N, 1);
+    plan.P_over_step_plan = inf(N, 1);
     plan.P_pv_ac_plan  = zeros(N, 1);
 
     plan.SoC_plan = SoC0 * ones(N, 1);
