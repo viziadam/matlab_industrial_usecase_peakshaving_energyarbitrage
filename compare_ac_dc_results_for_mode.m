@@ -4,14 +4,23 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 % Teljes sweep utan osszehasonlitja az AC es DC eredmenyeket ugyanarra a
 % mukodesi modra.
 %
-% Bemenet:
-%   cfgBase       - create_configurations(basePath) kimenete
-%   objectiveMode - "peak_only", "energy_only" vagy "combined"
+% Dolgozati kiertekeleshez keszitett kimenetek:
+%   - noBESS + legjobb DC + legjobb AC osszefoglalo tabla
+%   - mukodesi mod szerinti sweep abrak
+%   - koltsegkomponens abra
+%   - energiaaramlas / BESS-hasznalat abra
 %
-% Kimenet:
-%   compareResult.tableAll
-%   compareResult.bestByCoupling
-%   compareResult.outputFolder
+% Fontos BESS gazdasagi logika:
+%   Az eves BESS CAPEX+OPEX koltseg definicioja:
+%       C_BESS_year = deltaSoH_year / 0.2 * CAPEX_BESS + OPEX_BESS
+%
+%   Mivel a candidateTable jelenleg a teljes szimulacio vegso SoH erteket
+%   tartalmazza, az eves deltaSoH-t ekvivalens eves romlaskent szamitjuk:
+%       deltaSoH_year_eq = (1 - finalSoH) / simYears
+%
+%   Igy a teljes szimulacios idoszakra:
+%       C_BESS_total = (1 - finalSoH) / 0.2 * CAPEX_BESS
+%                    + simYears * OPEX_BESS
 
     objectiveMode = lower(string(objectiveMode));
 
@@ -38,90 +47,43 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
     Tac = local_load_candidate_table(acPath, "ac");
 
     tableAll = [Tdc; Tac];
+    tableAll = local_add_thesis_economic_columns(tableAll, cfgBase);
 
-    if ~ismember('wasSimulated', tableAll.Properties.VariableNames)
-        error('candidateTable missing wasSimulated column.');
-    end
+    local_require_columns(tableAll, { ...
+        'wasSimulated', ...
+        'hasError', ...
+        'coupling', ...
+        'BESS_PV_ratio', ...
+        'E_BESS_kWh', ...
+        'P_BESS_kW', ...
+        'P_PV_kW', ...
+        'P_inv_kW', ...
+        'bestContract_kW', ...
+        'objectiveCost_HUF', ...
+        'energyCost_HUF', ...
+        'contractCost_HUF', ...
+        'overrunCost_HUF', ...
+        'degradationCost_HUF', ...
+        'gridImport_kWh', ...
+        'gridImportNoBess_kWh', ...
+        'bessThroughput_kWh', ...
+        'peakReduction_pct', ...
+        'thesisTotalCost_HUF'});
 
-    if ~ismember('hasError', tableAll.Properties.VariableNames)
-        error('candidateTable missing hasError column.');
-    end
+    validMask = logical(tableAll.wasSimulated) & ...
+                ~logical(tableAll.hasError) & ...
+                isfinite(tableAll.thesisTotalCost_HUF);
 
-    validMask = logical(tableAll.wasSimulated) & ~logical(tableAll.hasError);
     validTable = tableAll(validMask, :);
 
     if isempty(validTable) || height(validTable) == 0
         error('No valid AC/DC candidates to compare.');
     end
 
-    requiredColumns = { ...
-        'coupling', ...
-        'BESS_PV_ratio', ...
-        'E_BESS_kWh', ...
-        'P_BESS_kW', ...
-        'P_PV_kW', ...
-        'P_inv_kW', ...
-        'bestContract_kW', ...
-        'objectiveCost_HUF', ...
-        'energyCost_HUF', ...
-        'contractCost_HUF', ...
-        'overrunCost_HUF', ...
-        'degradationCost_HUF', ...
-        'gridImport_kWh', ...
-        'gridImportNoBess_kWh', ...
-        'bessThroughput_kWh', ...
-        'peakReduction_pct'};
+    noBessRow = local_select_no_bess_row(tableAll);
+    bestByCoupling = local_select_best_by_coupling(validTable);
 
-    for i = 1:numel(requiredColumns)
-        if ~ismember(requiredColumns{i}, validTable.Properties.VariableNames)
-            error('Comparison table missing required column: %s', requiredColumns{i});
-        end
-    end
-
-    bestByCoupling = table();
-
-    couplings = ["dc", "ac"];
-
-    for i = 1:numel(couplings)
-
-        c = couplings(i);
-        sub = validTable(validTable.coupling == c, :);
-
-        if isempty(sub) || height(sub) == 0
-            error('No valid candidates for coupling: %s', c);
-        end
-
-        [~, idx] = min(sub.objectiveCost_HUF);
-        bestByCoupling = [bestByCoupling; sub(idx, :)]; %#ok<AGROW>
-    end
-
-    detailColumns = { ...
-        'coupling', ...
-        'candidateID', ...
-        'BESS_PV_ratio', ...
-        'P_PV_kW', ...
-        'P_inv_kW', ...
-        'E_BESS_kWh', ...
-        'P_BESS_kW', ...
-        'bestContract_kW', ...
-        'objectiveCost_HUF', ...
-        'energyCost_HUF', ...
-        'contractCost_HUF', ...
-        'overrunCost_HUF', ...
-        'degradationCost_HUF', ...
-        'gridImport_kWh', ...
-        'gridImportNoBess_kWh', ...
-        'bessThroughput_kWh', ...
-        'maxGridImportPeak_kW', ...
-        'maxGridImportNoBessPeak_kW', ...
-        'peakReduction_kW', ...
-        'peakReduction_pct', ...
-        'finalSoC', ...
-        'finalSoH', ...
-        'runtime_s'};
-
-    detailColumns = detailColumns(ismember(detailColumns, bestByCoupling.Properties.VariableNames));
-    bestDetailTable = bestByCoupling(:, detailColumns);
+    reportTable = local_build_report_table(noBessRow, bestByCoupling);
 
     outputFolder = fullfile(resultRoot, 'evaluation_ac_dc_comparison');
 
@@ -131,52 +93,32 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 
     writetable(tableAll, fullfile(outputFolder, 'comparison_all_candidates.csv'));
     writetable(validTable, fullfile(outputFolder, 'comparison_valid_candidates.csv'));
-    writetable(bestDetailTable, fullfile(outputFolder, 'best_ac_dc_candidates.csv'));
+    writetable(reportTable, fullfile(outputFolder, 'thesis_best_candidates_table.csv'));
 
-    fig1 = local_plot_metric_vs_ratio( ...
-        validTable, ...
-        'objectiveCost_HUF', ...
-        'Objective cost [HUF]', ...
-        'AC/DC objective cost', ...
-        outputFolder, ...
-        'objective_cost_ac_dc');
-
-    fig2 = local_plot_metric_vs_ratio( ...
-        validTable, ...
-        'bestContract_kW', ...
-        'Best contract [kW]', ...
-        'AC/DC optimal contract', ...
-        outputFolder, ...
-        'best_contract_ac_dc');
-
-    fig3 = local_plot_metric_vs_ratio( ...
-        validTable, ...
-        'peakReduction_pct', ...
-        'Peak reduction [%]', ...
-        'AC/DC peak reduction', ...
-        outputFolder, ...
-        'peak_reduction_ac_dc');
-
-    fig4 = local_plot_cost_components_best(bestByCoupling, outputFolder);
+    figSweep = local_plot_mode_sweep(validTable, objectiveMode, outputFolder);
+    figCost = local_plot_cost_components_report(reportTable, outputFolder);
+    figEnergy = local_plot_energy_report(reportTable, outputFolder);
+    figBess = local_plot_bess_report(reportTable, outputFolder);
 
     compareResult = struct();
     compareResult.objectiveMode = objectiveMode;
     compareResult.tableAll = tableAll;
     compareResult.validTable = validTable;
+    compareResult.noBessRow = noBessRow;
     compareResult.bestByCoupling = bestByCoupling;
-    compareResult.bestDetailTable = bestDetailTable;
+    compareResult.reportTable = reportTable;
     compareResult.outputFolder = outputFolder;
     compareResult.figures = struct();
-    compareResult.figures.objectiveCost = fig1;
-    compareResult.figures.bestContract = fig2;
-    compareResult.figures.peakReduction = fig3;
-    compareResult.figures.costComponents = fig4;
+    compareResult.figures.modeSweep = figSweep;
+    compareResult.figures.costComponents = figCost;
+    compareResult.figures.energyReport = figEnergy;
+    compareResult.figures.bessReport = figBess;
 
     save(fullfile(outputFolder, 'comparison_result.mat'), ...
         'compareResult', ...
         '-v7.3');
 
-    fprintf('\nAC/DC comparison saved:\n%s\n', outputFolder);
+    fprintf('\nAC/DC thesis comparison saved:\n%s\n', outputFolder);
 end
 
 
@@ -197,15 +139,222 @@ function T = local_load_candidate_table(matPath, coupling)
     end
 
     T = DB.candidateTable;
-    T.coupling = repmat(coupling, height(T), 1);
+    T.coupling = repmat(string(coupling), height(T), 1);
 end
 
 
-function fig = local_plot_metric_vs_ratio(T, metricName, yLabelText, titleText, outputFolder, fileName)
+function T = local_add_thesis_economic_columns(T, cfg)
 
-    fig = figure('Name', titleText, 'Position', [100, 100, 1250, 700]);
-    hold on;
-    grid on;
+    n = height(T);
+
+    local_require_columns(T, { ...
+        'E_BESS_kWh', ...
+        'P_BESS_kW', ...
+        'objectiveCost_HUF', ...
+        'finalSoH'});
+
+    simYears = cfg.analysis.simYears;
+
+    capexBess = ...
+        T.E_BESS_kWh .* cfg.cost.bess_huf_per_kWh + ...
+        T.P_BESS_kW   .* cfg.cost.bess_power_huf_per_kW;
+
+    opexBessAnnual = capexBess .* cfg.cost.bess_opex_frac_per_year;
+
+    finalSoH = T.finalSoH;
+    finalSoH(~isfinite(finalSoH)) = 1;
+
+    deltaSoHTotal = max(0, 1 - finalSoH);
+    deltaSoHAnnualEq = deltaSoHTotal ./ simYears;
+
+    bessSohCapexTotal = (deltaSoHTotal ./ 0.2) .* capexBess;
+    bessOpexTotal = simYears .* opexBessAnnual;
+    bessCapexOpexTotal = bessSohCapexTotal + bessOpexTotal;
+
+    bessAnnualCapexOpex = ...
+        (deltaSoHAnnualEq ./ 0.2) .* capexBess + opexBessAnnual;
+
+    zeroMask = T.E_BESS_kWh <= 0 | T.P_BESS_kW <= 0;
+
+    capexBess(zeroMask) = 0;
+    opexBessAnnual(zeroMask) = 0;
+    deltaSoHTotal(zeroMask) = 0;
+    deltaSoHAnnualEq(zeroMask) = 0;
+    bessSohCapexTotal(zeroMask) = 0;
+    bessOpexTotal(zeroMask) = 0;
+    bessCapexOpexTotal(zeroMask) = 0;
+    bessAnnualCapexOpex(zeroMask) = 0;
+
+    T.bessCapex_HUF = capexBess;
+    T.bessOpexAnnual_HUF = opexBessAnnual;
+    T.deltaSoHTotal = deltaSoHTotal;
+    T.deltaSoHAnnualEq = deltaSoHAnnualEq;
+    T.bessSohCapexTotal_HUF = bessSohCapexTotal;
+    T.bessOpexTotal_HUF = bessOpexTotal;
+    T.bessCapexOpexTotal_HUF = bessCapexOpexTotal;
+    T.bessAnnualCapexOpex_HUF = bessAnnualCapexOpex;
+    T.thesisTotalCost_HUF = T.objectiveCost_HUF + bessCapexOpexTotal;
+    T.thesisAnnualCost_HUF_per_year = T.thesisTotalCost_HUF ./ simYears;
+
+    if ~ismember('energyCostSaving_HUF', T.Properties.VariableNames)
+        T.energyCostSaving_HUF = NaN(n, 1);
+    end
+
+    if ~ismember('gridImportReduction_pct', T.Properties.VariableNames)
+        T.gridImportReduction_pct = NaN(n, 1);
+    end
+
+    if ~ismember('equivalentCycles', T.Properties.VariableNames)
+        T.equivalentCycles = local_safe_divide_vec(T.bessThroughput_kWh, 2 .* T.E_BESS_kWh);
+        T.equivalentCycles(zeroMask) = 0;
+    end
+end
+
+
+function row = local_select_no_bess_row(T)
+
+    local_require_columns(T, {'BESS_PV_ratio'});
+
+    idx = find(abs(T.BESS_PV_ratio) < 1e-12, 1, 'first');
+
+    if isempty(idx)
+        error('No noBESS baseline candidate found: BESS_PV_ratio = 0.');
+    end
+
+    row = T(idx, :);
+    row.scenarioLabel = "noBESS";
+end
+
+
+function bestByCoupling = local_select_best_by_coupling(validTable)
+
+    couplings = ["dc", "ac"];
+    bestByCoupling = table();
+
+    for i = 1:numel(couplings)
+
+        c = couplings(i);
+        sub = validTable(validTable.coupling == c & validTable.BESS_PV_ratio > 0, :);
+
+        if isempty(sub) || height(sub) == 0
+            error('No valid BESS candidates for coupling: %s', c);
+        end
+
+        [~, idx] = min(sub.thesisTotalCost_HUF);
+        selected = sub(idx, :);
+        selected.scenarioLabel = "best_" + c;
+
+        bestByCoupling = [bestByCoupling; selected]; %#ok<AGROW>
+    end
+end
+
+
+function reportTable = local_build_report_table(noBessRow, bestByCoupling)
+
+    reportTable = [noBessRow; bestByCoupling];
+
+    preferredColumns = { ...
+        'scenarioLabel', ...
+        'coupling', ...
+        'candidateID', ...
+        'BESS_PV_ratio', ...
+        'P_PV_kW', ...
+        'P_inv_kW', ...
+        'E_BESS_kWh', ...
+        'P_BESS_kW', ...
+        'bestContract_kW', ...
+        'thesisTotalCost_HUF', ...
+        'thesisAnnualCost_HUF_per_year', ...
+        'objectiveCost_HUF', ...
+        'energyCost_HUF', ...
+        'contractCost_HUF', ...
+        'overrunCost_HUF', ...
+        'degradationCost_HUF', ...
+        'bessAnnualCapexOpex_HUF', ...
+        'bessCapexOpexTotal_HUF', ...
+        'gridImport_kWh', ...
+        'gridImportNoBess_kWh', ...
+        'gridImportReduction_kWh', ...
+        'gridImportReduction_pct', ...
+        'energyCostSaving_HUF', ...
+        'bessThroughput_kWh', ...
+        'equivalentCycles', ...
+        'maxGridImportPeak_kW', ...
+        'maxGridImportNoBessPeak_kW', ...
+        'peakReduction_kW', ...
+        'peakReduction_pct', ...
+        'deltaSoHTotal', ...
+        'finalSoC', ...
+        'finalSoH', ...
+        'runtime_s'};
+
+    preferredColumns = preferredColumns(ismember(preferredColumns, reportTable.Properties.VariableNames));
+    reportTable = reportTable(:, preferredColumns);
+end
+
+
+function fig = local_plot_mode_sweep(T, objectiveMode, outputFolder)
+
+    switch objectiveMode
+        case "peak_only"
+            metrics = { ...
+                'thesisTotalCost_HUF', 'Total cost incl. BESS SoH CAPEX+OPEX [HUF]'; ...
+                'bestContract_kW', 'Optimal contracted power [kW]'; ...
+                'peakReduction_pct', 'Peak reduction [%]'; ...
+                'overrunCost_HUF', 'Overrun cost [HUF]' };
+            figTitle = 'Peak-only evaluation - AC/DC sweep';
+
+        case "energy_only"
+            metrics = { ...
+                'thesisTotalCost_HUF', 'Total cost incl. BESS SoH CAPEX+OPEX [HUF]'; ...
+                'energyCostSaving_HUF', 'Energy cost saving [HUF]'; ...
+                'gridImportReduction_pct', 'Grid import reduction [%]'; ...
+                'bessThroughput_kWh', 'BESS throughput [kWh]' };
+            figTitle = 'Energy-only evaluation - AC/DC sweep';
+
+        case "combined"
+            metrics = { ...
+                'thesisTotalCost_HUF', 'Total cost incl. BESS SoH CAPEX+OPEX [HUF]'; ...
+                'bestContract_kW', 'Optimal contracted power [kW]'; ...
+                'peakReduction_pct', 'Peak reduction [%]'; ...
+                'energyCostSaving_HUF', 'Energy cost saving [HUF]' };
+            figTitle = 'Combined evaluation - AC/DC sweep';
+
+        otherwise
+            error('Invalid objectiveMode: %s', objectiveMode);
+    end
+
+    fig = figure('Name', figTitle, 'Position', [100, 80, 1250, 950]);
+
+    for k = 1:size(metrics, 1)
+
+        metricName = metrics{k, 1};
+        yLabelText = metrics{k, 2};
+
+        subplot(size(metrics, 1), 1, k);
+        hold on;
+        grid on;
+
+        local_plot_metric_by_coupling(T, metricName);
+
+        ylabel(yLabelText);
+
+        if k == 1
+            title(figTitle);
+        end
+
+        if k == size(metrics, 1)
+            xlabel('BESS/PV ratio [-]');
+        end
+
+        legend('Location', 'best');
+    end
+
+    local_save_figure(fig, outputFolder, sprintf('thesis_%s_sweep_ac_dc', objectiveMode));
+end
+
+
+function local_plot_metric_by_coupling(T, metricName)
 
     couplings = ["dc", "ac"];
 
@@ -215,39 +364,156 @@ function fig = local_plot_metric_vs_ratio(T, metricName, yLabelText, titleText, 
         sub = T(T.coupling == c, :);
         sub = sortrows(sub, 'BESS_PV_ratio');
 
-        plot(sub.BESS_PV_ratio, sub.(metricName), '-o', ...
-            'LineWidth', 1.8, ...
+        if ~ismember(metricName, sub.Properties.VariableNames)
+            y = NaN(height(sub), 1);
+        else
+            y = sub.(metricName);
+        end
+
+        plot(sub.BESS_PV_ratio, y, '-o', ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 4, ...
             'DisplayName', upper(c));
     end
-
-    xlabel('BESS/PV ratio [-]');
-    ylabel(yLabelText);
-    title(titleText);
-    legend('Location', 'best');
-
-    local_save_figure(fig, outputFolder, fileName);
 end
 
 
-function fig = local_plot_cost_components_best(bestByCoupling, outputFolder)
+function fig = local_plot_cost_components_report(reportTable, outputFolder)
 
-    fig = figure('Name', 'Best AC/DC cost components', 'Position', [120, 100, 1200, 700]);
-    hold on;
-    grid on;
+    fig = figure('Name', 'Cost components - noBESS, best DC, best AC', ...
+        'Position', [120, 80, 1200, 800]);
+
+    labels = local_report_labels(reportTable);
 
     components = [ ...
-        bestByCoupling.energyCost_HUF, ...
-        bestByCoupling.contractCost_HUF, ...
-        bestByCoupling.overrunCost_HUF, ...
-        bestByCoupling.degradationCost_HUF] / 1e6;
+        local_col(reportTable, 'energyCost_HUF'), ...
+        local_col(reportTable, 'contractCost_HUF'), ...
+        local_col(reportTable, 'overrunCost_HUF'), ...
+        local_col(reportTable, 'degradationCost_HUF'), ...
+        local_col(reportTable, 'bessCapexOpexTotal_HUF')] / 1e6;
 
-    bar(categorical(upper(string(bestByCoupling.coupling))), components, 'stacked');
+    subplot(2,1,1);
+    bar(categorical(labels), components, 'stacked');
+    grid on;
+    ylabel('Cost over simulation [million HUF]');
+    title('Cost components');
+    legend({'Energy', 'Contract', 'Overrun', 'Degradation', 'BESS SoH CAPEX+OPEX'}, ...
+        'Location', 'bestoutside');
 
-    ylabel('Cost [million HUF]');
-    title('Best AC/DC candidates - operational cost components');
-    legend({'Energy', 'Contract', 'Overrun', 'Degradation'}, 'Location', 'best');
+    subplot(2,1,2);
+    bar(categorical(labels), local_col(reportTable, 'thesisAnnualCost_HUF_per_year') / 1e6);
+    grid on;
+    ylabel('Equivalent annual cost [million HUF/year]');
+    title('Equivalent annual total cost');
 
-    local_save_figure(fig, outputFolder, 'best_ac_dc_cost_components');
+    local_save_figure(fig, outputFolder, 'thesis_cost_components_noBESS_bestDC_bestAC');
+end
+
+
+function fig = local_plot_energy_report(reportTable, outputFolder)
+
+    fig = figure('Name', 'Energy and peak results - noBESS, best DC, best AC', ...
+        'Position', [140, 80, 1200, 900]);
+
+    labels = local_report_labels(reportTable);
+
+    subplot(3,1,1);
+    bar(categorical(labels), [ ...
+        local_col(reportTable, 'gridImport_kWh'), ...
+        local_col(reportTable, 'gridImportNoBess_kWh')] / 1000);
+    grid on;
+    ylabel('Energy [MWh]');
+    title('Grid import');
+    legend({'With selected system', 'noBESS reference'}, 'Location', 'best');
+
+    subplot(3,1,2);
+    bar(categorical(labels), local_col(reportTable, 'gridImportReduction_pct'));
+    grid on;
+    ylabel('Reduction [%]');
+    title('Grid import reduction');
+
+    subplot(3,1,3);
+    bar(categorical(labels), [ ...
+        local_col(reportTable, 'maxGridImportPeak_kW'), ...
+        local_col(reportTable, 'maxGridImportNoBessPeak_kW')]);
+    grid on;
+    ylabel('Power [kW]');
+    title('Maximum grid import peak');
+    legend({'With selected system', 'noBESS reference'}, 'Location', 'best');
+
+    local_save_figure(fig, outputFolder, 'thesis_energy_peak_noBESS_bestDC_bestAC');
+end
+
+
+function fig = local_plot_bess_report(reportTable, outputFolder)
+
+    fig = figure('Name', 'BESS utilization - best DC and best AC', ...
+        'Position', [160, 80, 1200, 850]);
+
+    labels = local_report_labels(reportTable);
+
+    subplot(3,1,1);
+    bar(categorical(labels), local_col(reportTable, 'bessThroughput_kWh') / 1000);
+    grid on;
+    ylabel('Throughput [MWh]');
+    title('BESS throughput');
+
+    subplot(3,1,2);
+    bar(categorical(labels), local_col(reportTable, 'equivalentCycles'));
+    grid on;
+    ylabel('Cycles [-]');
+    title('Equivalent full cycles');
+
+    subplot(3,1,3);
+    bar(categorical(labels), [ ...
+        local_col(reportTable, 'deltaSoHTotal') * 100, ...
+        local_col(reportTable, 'finalSoH') * 100]);
+    grid on;
+    ylabel('Percent [%]');
+    title('Battery degradation and final SoH');
+    legend({'Delta SoH', 'Final SoH'}, 'Location', 'best');
+
+    local_save_figure(fig, outputFolder, 'thesis_bess_utilization_noBESS_bestDC_bestAC');
+end
+
+
+function labels = local_report_labels(reportTable)
+
+    if ismember('scenarioLabel', reportTable.Properties.VariableNames)
+        labels = string(reportTable.scenarioLabel);
+    else
+        labels = string(reportTable.coupling);
+    end
+
+    labels = matlab.lang.makeValidName(labels);
+end
+
+
+function y = local_col(T, colName)
+
+    if ismember(colName, T.Properties.VariableNames)
+        y = T.(colName);
+    else
+        y = NaN(height(T), 1);
+    end
+end
+
+
+function local_require_columns(T, colNames)
+
+    for i = 1:numel(colNames)
+        if ~ismember(colNames{i}, T.Properties.VariableNames)
+            error('Missing required table column: %s', colNames{i});
+        end
+    end
+end
+
+
+function y = local_safe_divide_vec(a, b)
+
+    y = NaN(size(a));
+    mask = isfinite(a) & isfinite(b) & abs(b) > 1e-12;
+    y(mask) = a(mask) ./ b(mask);
 end
 
 
