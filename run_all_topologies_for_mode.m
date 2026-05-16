@@ -39,6 +39,13 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
 
     data = build_data(cfgBase);
 
+    % ---------------------------------------------------------------------
+    % Ipari pelda bemutato abra
+    % ---------------------------------------------------------------------
+    % Ezt eleg egyszer elkesziteni, mert nem topologiafuggo.
+    industrialCtxForOverview = prepare_industrial_simulation_context(data, cfgBase);
+    overviewResult = plot_industrial_case_overview(cfgBase, industrialCtxForOverview); %#ok<NASGU>
+
     couplings = ["dc", "ac"];
 
     runResult = struct();
