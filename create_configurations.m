@@ -24,6 +24,10 @@ function cfg = create_configurations(basePath)
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
 
+    % No-BESS referencia lekotott teljesitmenye.
+    % Ezt hasznalja a noBESS baseline, nem futtat kulon contract optimalizalast.
+    cfg.dispatch.noBessContract_kW = 700;
+
 
     cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
