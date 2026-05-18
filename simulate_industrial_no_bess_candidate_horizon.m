@@ -2,91 +2,59 @@ function [running, simSummary, detail] = simulate_industrial_no_bess_candidate_h
     industrialCtx, design, cfg)
 % SIMULATE_INDUSTRIAL_NO_BESS_CANDIDATE_HORIZON
 %
-% No-BESS / PV-only baseline candidate futtatása.
+% No-BESS / PV-only baseline candidate futtatasa.
 %
 % Fontos:
 %   - nincs BESS planner;
 %   - nincs BESS topology;
-%   - nincs BESS degradáció;
-%   - ugyanazt a dayVectors -> update_metrics útvonalat használja,
-%     mint a BESS-es szimuláció;
-%   - contract optimalizálás továbbra is van, csak BESS nélküli grid
-%     import alapján.
+%   - nincs BESS degradacio;
+%   - ugyanazt a dayVectors -> update_metrics utvonalat hasznalja,
+%     mint a BESS-es szimulacio;
+%   - a noBESS referencia lekotott teljesitmenye konfiguraciobol jon:
+%       cfg.dispatch.noBessContract_kW
 
     requiredCtxFields = {'day_cache', 'tariff'};
     for i = 1:numel(requiredCtxFields)
         if ~isfield(industrialCtx, requiredCtxFields{i})
-            error('Hiányzó industrialCtx mező: industrialCtx.%s', requiredCtxFields{i});
+            error('Missing industrialCtx field: industrialCtx.%s', requiredCtxFields{i});
         end
     end
 
-    if ~isfield(cfg, 'contractSearch')
-        error('Hiányzó cfg mező: cfg.contractSearch');
-    end
-
-    if ~isfield(cfg.contractSearch, 'min_kW')
-        error('Hiányzó cfg.contractSearch.min_kW');
-    end
-
-    if ~isfield(cfg.contractSearch, 'max_kW')
-        error('Hiányzó cfg.contractSearch.max_kW');
-    end
-
-    if ~isfield(cfg.contractSearch, 'fine_step_kW')
-        error('Hiányzó cfg.contractSearch.fine_step_kW');
+    if ~isfield(cfg, 'dispatch') || ~isfield(cfg.dispatch, 'noBessContract_kW')
+        error('Missing cfg.dispatch.noBessContract_kW.');
     end
 
     day_cache = industrialCtx.day_cache;
     tariff = industrialCtx.tariff;
 
-    nDays = numel(day_cache);
     nT = numel(day_cache(1).P_load_actual);
 
     running = init_metrics(nT, cfg);
 
     % =====================================================================
-    % 1) No-BESS contract keresés
+    % 1) No-BESS fixed contract
     % =====================================================================
     tSearch = tic;
 
-    contractCandidates = ...
-        cfg.contractSearch.min_kW : ...
-        cfg.contractSearch.fine_step_kW : ...
-        cfg.contractSearch.max_kW;
+    best_contract_kW = cfg.dispatch.noBessContract_kW;
 
-    if isempty(contractCandidates)
-        error('Üres no-BESS contract keresési tartomány.');
-    end
+    costParts = local_evaluate_no_bess_contract( ...
+        day_cache, ...
+        tariff, ...
+        best_contract_kW);
 
     noBessSearch = struct();
-    noBessSearch.contract_kW = contractCandidates(:);
-    noBessSearch.total_cost_huf = NaN(numel(contractCandidates), 1);
-    noBessSearch.energy_cost_huf = NaN(numel(contractCandidates), 1);
-    noBessSearch.contract_cost_huf = NaN(numel(contractCandidates), 1);
-    noBessSearch.overrun_cost_huf = NaN(numel(contractCandidates), 1);
-
-    for i = 1:numel(contractCandidates)
-
-        c_kW = contractCandidates(i);
-
-        costParts = local_evaluate_no_bess_contract( ...
-            day_cache, ...
-            tariff, ...
-            c_kW);
-
-        noBessSearch.energy_cost_huf(i) = costParts.energy_cost_huf;
-        noBessSearch.contract_cost_huf(i) = costParts.contract_cost_huf;
-        noBessSearch.overrun_cost_huf(i) = costParts.overrun_cost_huf;
-        noBessSearch.total_cost_huf(i) = costParts.total_cost_huf;
-    end
-
-    [~, bestIdx] = min(noBessSearch.total_cost_huf);
-    best_contract_kW = noBessSearch.contract_kW(bestIdx);
+    noBessSearch.contract_kW = best_contract_kW;
+    noBessSearch.energy_cost_huf = costParts.energy_cost_huf;
+    noBessSearch.contract_cost_huf = costParts.contract_cost_huf;
+    noBessSearch.overrun_cost_huf = costParts.overrun_cost_huf;
+    noBessSearch.total_cost_huf = costParts.total_cost_huf;
+    noBessSearch.mode = "fixed_configured_no_bess_contract";
 
     contractSearchRuntime_s = toc(tSearch);
 
     % =====================================================================
-    % 2) Full horizon no-BESS futás a legjobb contracttal
+    % 2) Full horizon no-BESS futas a konfiguralt contracttal
     % =====================================================================
     tFull = tic;
 
@@ -100,7 +68,7 @@ function [running, simSummary, detail] = simulate_industrial_no_bess_candidate_h
     fullHorizonRuntime_s = toc(tFull);
 
     % =====================================================================
-    % 3) Summary metrikák kitöltése
+    % 3) Summary metrikak kitoltese
     % =====================================================================
     summarySource = struct();
 
@@ -118,7 +86,7 @@ function [running, simSummary, detail] = simulate_industrial_no_bess_candidate_h
             sourceName = char(cfg.output.summaryMetrics(i).source);
 
             if ~isfield(summarySource, sourceName)
-                error('cfg.output.summaryMetrics nem létező source mezőt kér: %s', sourceName);
+                error('cfg.output.summaryMetrics requested missing source field: %s', sourceName);
             end
 
             running.summary.(metricName) = summarySource.(sourceName);
