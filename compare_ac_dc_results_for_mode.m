@@ -51,6 +51,7 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 
     noBessRow = local_select_no_bess_row(tableAll);
     tableAll = local_add_no_bess_comparison_columns(tableAll, noBessRow, cfgBase);
+    noBessRow = local_select_no_bess_row(tableAll);
 
     local_require_columns(tableAll, { ...
         'wasSimulated', ...
