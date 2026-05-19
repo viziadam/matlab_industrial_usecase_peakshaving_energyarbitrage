@@ -246,12 +246,26 @@ function [running, result, detail] = local_run_no_bess_full_horizon( ...
             C_overrun_step_HUF + ...
             C_contract_step_HUF;
 
+        P_pv_ac_kW = max(dc.P_load_actual(:) - P_grid_import_kW(:), 0);
+
         dayRes = struct();
         dayRes.E_grid_import = P_grid_import_kW(:) * dc.dt_h;
         dayRes.E_stored = zeros(N, 1);
         dayRes.E_discharged = zeros(N, 1);
         dayRes.P_curtailment_kW = zeros(N, 1);
         dayRes.SoC = NaN(N, 1);
+
+        dayRes.P_pv_ac_kW = P_pv_ac_kW(:);
+        dayRes.P_grid_import_kW = P_grid_import_kW(:);
+        dayRes.P_grid_export_kW = zeros(N, 1);
+        dayRes.P_grid_net_kW = P_grid_import_kW(:);
+        dayRes.P_bess_actual_kW = zeros(N, 1);
+        dayRes.P_spill_kW = zeros(N, 1);
+
+        dayRes.E_loss_inv = zeros(N, 1);
+        dayRes.E_loss_dcdc = zeros(N, 1);
+        dayRes.E_loss_joule = zeros(N, 1);
+        dayRes.E_curtailment = zeros(N, 1);
 
         plan_today = struct();
         plan_today.P_grid_plan = P_grid_import_kW(:);
