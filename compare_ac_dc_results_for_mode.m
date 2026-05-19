@@ -9,6 +9,7 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 %   - mukodesi mod szerinti sweep abrak
 %   - koltsegkomponens abra
 %   - energiaaramlas / BESS-hasznalat abra
+%   - peak-only es energy-only specifikus haszon-koltseg abrak
 %
 % Fontos BESS gazdasagi logika:
 %   Az eves BESS CAPEX+OPEX koltseg definicioja:
@@ -72,6 +73,8 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
         'gridImportNoBess_kWh', ...
         'bessThroughput_kWh', ...
         'contractReductionVsNoBess_pct', ...
+        'energySavingVsNoBess_HUF', ...
+        'gridImportReductionVsNoBess_pct', ...
         'thesisTotalCost_HUF'});
 
     validMask = logical(tableAll.wasSimulated) & ...
@@ -104,8 +107,12 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
     figBess = local_plot_bess_report(reportTable, outputFolder);
 
     figPeakSavings = [];
+    figEnergySavings = [];
+
     if objectiveMode == "peak_only"
         figPeakSavings = local_plot_peak_only_savings_bar(validTable, outputFolder);
+    elseif objectiveMode == "energy_only"
+        figEnergySavings = local_plot_energy_only_savings_bar(validTable, outputFolder);
     end
 
     compareResult = struct();
@@ -122,6 +129,7 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
     compareResult.figures.energyReport = figEnergy;
     compareResult.figures.bessReport = figBess;
     compareResult.figures.peakSavings = figPeakSavings;
+    compareResult.figures.energySavings = figEnergySavings;
 
     save(fullfile(outputFolder, 'comparison_result.mat'), ...
         'compareResult', ...
@@ -160,7 +168,8 @@ function T = local_add_thesis_economic_columns(T, cfg)
         'E_BESS_kWh', ...
         'P_BESS_kW', ...
         'objectiveCost_HUF', ...
-        'finalSoH'});
+        'finalSoH', ...
+        'degradationCost_HUF'});
 
     simYears = cfg.analysis.simYears;
 
@@ -202,6 +211,8 @@ function T = local_add_thesis_economic_columns(T, cfg)
     T.bessOpexTotal_HUF = bessOpexTotal;
     T.bessCapexOpexTotal_HUF = bessCapexOpexTotal;
     T.bessAnnualCapexOpex_HUF = bessAnnualCapexOpex;
+    T.degradationCost_HUF_per_year = T.degradationCost_HUF ./ simYears;
+    T.objectiveCost_HUF_per_year = T.objectiveCost_HUF ./ simYears;
     T.thesisTotalCost_HUF = T.objectiveCost_HUF + bessCapexOpexTotal;
     T.thesisAnnualCost_HUF_per_year = T.thesisTotalCost_HUF ./ simYears;
 
@@ -229,6 +240,7 @@ function T = local_add_no_bess_comparison_columns(T, noBessRow, cfg)
     noBessContract = noBessRow.contractCost_HUF(1);
     noBessOverrun = noBessRow.overrunCost_HUF(1);
     noBessPeak = noBessRow.maxGridImportPeak_kW(1);
+    noBessGridImport = noBessRow.gridImport_kWh(1);
 
     if isfield(cfg, 'dispatch') && isfield(cfg.dispatch, 'noBessContract_kW')
         noBessContractReference = cfg.dispatch.noBessContract_kW;
@@ -250,6 +262,10 @@ function T = local_add_no_bess_comparison_columns(T, noBessRow, cfg)
     T.overrunSavingVsNoBess_HUF_per_year = ...
         T.overrunSavingVsNoBess_HUF ./ simYears;
 
+    T.energySavingVsNoBess_pct = 100 .* local_safe_divide_vec( ...
+        T.energySavingVsNoBess_HUF, ...
+        noBessEnergy .* ones(height(T), 1));
+
     T.netSavingVsNoBess_HUF = ...
         T.operationalSavingVsNoBess_HUF - T.bessCapexOpexTotal_HUF;
     T.netAnnualSavingVsNoBess_HUF_per_year = ...
@@ -260,6 +276,12 @@ function T = local_add_no_bess_comparison_columns(T, noBessRow, cfg)
     T.peakReductionVsNoBess_pct = 100 .* local_safe_divide_vec( ...
         T.peakReductionVsNoBess_kW, ...
         noBessPeak .* ones(height(T), 1));
+
+    T.noBessReferenceGridImport_kWh = repmat(noBessGridImport, height(T), 1);
+    T.gridImportReductionVsNoBess_kWh = noBessGridImport - T.gridImport_kWh;
+    T.gridImportReductionVsNoBess_pct = 100 .* local_safe_divide_vec( ...
+        T.gridImportReductionVsNoBess_kWh, ...
+        noBessGridImport .* ones(height(T), 1));
 
     T.noBessReferenceContract_kW = repmat(noBessContractReference, height(T), 1);
     T.contractReductionVsNoBess_kW = noBessContractReference - T.bestContract_kW;
@@ -277,10 +299,13 @@ function T = local_add_no_bess_comparison_columns(T, noBessRow, cfg)
     T.energySavingVsNoBess_HUF_per_year(zeroMask) = 0;
     T.contractSavingVsNoBess_HUF_per_year(zeroMask) = 0;
     T.overrunSavingVsNoBess_HUF_per_year(zeroMask) = 0;
+    T.energySavingVsNoBess_pct(zeroMask) = 0;
     T.netSavingVsNoBess_HUF(zeroMask) = 0;
     T.netAnnualSavingVsNoBess_HUF_per_year(zeroMask) = 0;
     T.peakReductionVsNoBess_kW(zeroMask) = 0;
     T.peakReductionVsNoBess_pct(zeroMask) = 0;
+    T.gridImportReductionVsNoBess_kWh(zeroMask) = 0;
+    T.gridImportReductionVsNoBess_pct(zeroMask) = 0;
     T.contractReductionVsNoBess_kW(zeroMask) = 0;
     T.contractReductionVsNoBess_pct(zeroMask) = 0;
 end
@@ -348,9 +373,13 @@ function reportTable = local_build_report_table(noBessRow, bestByCoupling)
         'contractCost_HUF', ...
         'overrunCost_HUF', ...
         'degradationCost_HUF', ...
+        'degradationCost_HUF_per_year', ...
         'bessAnnualCapexOpex_HUF', ...
         'bessCapexOpexTotal_HUF', ...
         'operationalSavingVsNoBess_HUF', ...
+        'energySavingVsNoBess_HUF', ...
+        'energySavingVsNoBess_HUF_per_year', ...
+        'energySavingVsNoBess_pct', ...
         'contractSavingVsNoBess_HUF', ...
         'overrunSavingVsNoBess_HUF', ...
         'netSavingVsNoBess_HUF', ...
@@ -359,6 +388,8 @@ function reportTable = local_build_report_table(noBessRow, bestByCoupling)
         'gridImportNoBess_kWh', ...
         'gridImportReduction_kWh', ...
         'gridImportReduction_pct', ...
+        'gridImportReductionVsNoBess_kWh', ...
+        'gridImportReductionVsNoBess_pct', ...
         'energyCostSaving_HUF', ...
         'bessThroughput_kWh', ...
         'equivalentCycles', ...
@@ -391,10 +422,10 @@ function fig = local_plot_mode_sweep(T, objectiveMode, outputFolder)
 
         case "energy_only"
             metrics = { ...
-                'thesisTotalCost_HUF', 'Teljes költség BESS SoH CAPEX+OPEX-szel [HUF]'; ...
-                'energyCostSaving_HUF', 'Energiaköltség megtakarítás [HUF]'; ...
-                'gridImportReduction_pct', 'Hálózati import csökkenése [%]'; ...
-                'bessThroughput_kWh', 'BESS throughput [kWh]' };
+                'energySavingVsNoBess_HUF_per_year', 'Energiaköltség megtakarítás [HUF/év]'; ...
+                'gridImportReductionVsNoBess_pct', 'Hálózati import csökkenése [%]'; ...
+                'bessThroughput_kWh', 'BESS throughput [kWh]'; ...
+                'netAnnualSavingVsNoBess_HUF_per_year', 'Nettó éves eredmény [HUF/év]' };
             figTitle = 'Energy-only kiértékelés - AC/DC méretsöprés';
 
         case "combined"
@@ -402,7 +433,7 @@ function fig = local_plot_mode_sweep(T, objectiveMode, outputFolder)
                 'thesisTotalCost_HUF', 'Teljes költség BESS SoH CAPEX+OPEX-szel [HUF]'; ...
                 'bestContract_kW', 'Optimális lekötött teljesítmény [kW]'; ...
                 'contractReductionVsNoBess_pct', 'Lekötött teljesítmény csökkenése [%]'; ...
-                'energyCostSaving_HUF', 'Energiaköltség megtakarítás [HUF]' };
+                'energySavingVsNoBess_HUF_per_year', 'Energiaköltség megtakarítás [HUF/év]' };
             figTitle = 'Kombinált kiértékelés - AC/DC méretsöprés';
 
         otherwise
@@ -525,6 +556,68 @@ function fig = local_plot_peak_only_savings_bar(T, outputFolder)
 end
 
 
+function fig = local_plot_energy_only_savings_bar(T, outputFolder)
+
+    fig = figure('Name', 'Energy-only éves megtakarítások és BESS költség', ...
+        'Position', [120, 80, 1350, 950]);
+
+    couplings = ["dc", "ac"];
+
+    for i = 1:numel(couplings)
+
+        c = couplings(i);
+        sub = T(T.coupling == c & T.BESS_PV_ratio > 0, :);
+        sub = sortrows(sub, 'BESS_PV_ratio');
+
+        xLabels = string(sub.BESS_PV_ratio);
+
+        Y = [ ...
+            sub.energySavingVsNoBess_HUF_per_year, ...
+           -sub.degradationCost_HUF_per_year, ...
+           -sub.bessAnnualCapexOpex_HUF] ./ 1e6;
+
+        subplot(3, 1, i);
+        bar(categorical(xLabels), Y, 'grouped');
+        yline(0, 'k-');
+        grid on;
+        ylabel('millió Ft/év');
+        title(sprintf('Energia-megtakarítások és BESS költség - %s csatolás', upper(c)));
+        legend({ ...
+            'Energiaköltség megtakarítás', ...
+            'Degradációs költség', ...
+            'BESS éves költség'}, ...
+            'Location', 'bestoutside');
+
+        if i == numel(couplings)
+            xlabel('BESS/PV arány [-]');
+        end
+    end
+
+    subplot(3, 1, 3);
+    hold on;
+    grid on;
+
+    for i = 1:numel(couplings)
+        c = couplings(i);
+        sub = T(T.coupling == c & T.BESS_PV_ratio > 0, :);
+        sub = sortrows(sub, 'BESS_PV_ratio');
+
+        plot(sub.BESS_PV_ratio, sub.netAnnualSavingVsNoBess_HUF_per_year ./ 1e6, '-o', ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 4, ...
+            'DisplayName', upper(c));
+    end
+
+    yline(0, 'k-');
+    xlabel('BESS/PV arány [-]');
+    ylabel('millió Ft/év');
+    title('Nettó éves eredmény');
+    legend('Location', 'best');
+
+    local_save_figure(fig, outputFolder, 'thesis_energy_only_savings_vs_noBESS_ac_dc');
+end
+
+
 function fig = local_plot_cost_components_report(reportTable, outputFolder)
 
     fig = figure('Name', 'Költségkomponensek - noBESS, legjobb DC, legjobb AC', ...
@@ -574,7 +667,7 @@ function fig = local_plot_energy_report(reportTable, outputFolder)
     legend({'Kiválasztott rendszer', 'noBESS referencia'}, 'Location', 'best');
 
     subplot(3,1,2);
-    bar(categorical(labels), local_col(reportTable, 'gridImportReduction_pct'));
+    bar(categorical(labels), local_col(reportTable, 'gridImportReductionVsNoBess_pct'));
     grid on;
     ylabel('Csökkenés [%]');
     title('Hálózati import csökkenése');
