@@ -37,12 +37,15 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     cfgBase = create_configurations(basePath);
     cfgBase.dispatch.objectiveMode = objectiveMode;
 
+    if objectiveMode == "energy_only"
+        cfgBase = add_energy_only_evaluation_metrics_to_cfg(cfgBase);
+    end
+
     data = build_data(cfgBase);
 
     % ---------------------------------------------------------------------
     % Ipari pelda bemutato abra
     % ---------------------------------------------------------------------
-    % Ezt eleg egyszer elkesziteni, mert nem topologiafuggo.
     industrialCtxForOverview = prepare_industrial_simulation_context(data, cfgBase);
     overviewResult = plot_industrial_case_overview(cfgBase, industrialCtxForOverview); %#ok<NASGU>
 
@@ -61,6 +64,10 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         cfg = cfgBase;
         cfg.system.bessCoupling = coupling;
         cfg.dispatch.objectiveMode = objectiveMode;
+
+        if objectiveMode == "energy_only"
+            cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
+        end
 
         cfg.paths.results = fullfile(cfgBase.paths.results, char(objectiveMode));
         cfg.paths.figures = fullfile(cfg.paths.results, 'figures');
