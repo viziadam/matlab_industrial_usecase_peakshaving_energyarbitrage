@@ -9,7 +9,7 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 %   - mukodesi mod szerinti sweep abrak
 %   - koltsegkomponens abra
 %   - energiaaramlas / BESS-hasznalat abra
-%   - peak-only es energy-only specifikus haszon-koltseg abrak
+%   - peak-only, energy-only es combined specifikus haszon-koltseg abrak
 %
 % Fontos BESS gazdasagi logika:
 %   Az eves BESS CAPEX+OPEX koltseg definicioja:
@@ -108,11 +108,14 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
 
     figPeakSavings = [];
     figEnergySavings = [];
+    figCombinedSavings = [];
 
     if objectiveMode == "peak_only"
         figPeakSavings = local_plot_peak_only_savings_bar(validTable, outputFolder);
     elseif objectiveMode == "energy_only"
         figEnergySavings = local_plot_energy_only_savings_bar(validTable, outputFolder);
+    elseif objectiveMode == "combined"
+        figCombinedSavings = local_plot_combined_savings_bar(validTable, outputFolder);
     end
 
     compareResult = struct();
@@ -130,6 +133,7 @@ function compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode)
     compareResult.figures.bessReport = figBess;
     compareResult.figures.peakSavings = figPeakSavings;
     compareResult.figures.energySavings = figEnergySavings;
+    compareResult.figures.combinedSavings = figCombinedSavings;
 
     save(fullfile(outputFolder, 'comparison_result.mat'), ...
         'compareResult', ...
@@ -430,10 +434,10 @@ function fig = local_plot_mode_sweep(T, objectiveMode, outputFolder)
 
         case "combined"
             metrics = { ...
-                'thesisTotalCost_HUF', 'Teljes költség BESS SoH CAPEX+OPEX-szel [HUF]'; ...
                 'bestContract_kW', 'Optimális lekötött teljesítmény [kW]'; ...
+                'energySavingVsNoBess_HUF_per_year', 'Energiaköltség megtakarítás [HUF/év]'; ...
                 'contractReductionVsNoBess_pct', 'Lekötött teljesítmény csökkenése [%]'; ...
-                'energySavingVsNoBess_HUF_per_year', 'Energiaköltség megtakarítás [HUF/év]' };
+                'netAnnualSavingVsNoBess_HUF_per_year', 'Nettó éves eredmény [HUF/év]' };
             figTitle = 'Kombinált kiértékelés - AC/DC méretsöprés';
 
         otherwise
@@ -615,6 +619,74 @@ function fig = local_plot_energy_only_savings_bar(T, outputFolder)
     legend('Location', 'best');
 
     local_save_figure(fig, outputFolder, 'thesis_energy_only_savings_vs_noBESS_ac_dc');
+end
+
+
+function fig = local_plot_combined_savings_bar(T, outputFolder)
+
+    fig = figure('Name', 'Kombinált éves megtakarítások és BESS költség', ...
+        'Position', [120, 80, 1350, 950]);
+
+    couplings = ["dc", "ac"];
+
+    for i = 1:numel(couplings)
+
+        c = couplings(i);
+        sub = T(T.coupling == c & T.BESS_PV_ratio > 0, :);
+        sub = sortrows(sub, 'BESS_PV_ratio');
+
+        xLabels = string(sub.BESS_PV_ratio);
+
+        performanceSaving = ...
+            sub.contractSavingVsNoBess_HUF_per_year + ...
+            sub.overrunSavingVsNoBess_HUF_per_year;
+
+        Y = [ ...
+            sub.energySavingVsNoBess_HUF_per_year, ...
+            performanceSaving, ...
+           -sub.degradationCost_HUF_per_year, ...
+           -sub.bessAnnualCapexOpex_HUF] ./ 1e6;
+
+        subplot(3, 1, i);
+        bar(categorical(xLabels), Y, 'grouped');
+        yline(0, 'k-');
+        grid on;
+        ylabel('millió Ft/év');
+        title(sprintf('Kombinált megtakarítások és BESS költség - %s csatolás', upper(c)));
+        legend({ ...
+            'Energiaköltség megtakarítás', ...
+            'Teljesítménydíj megtakarítás', ...
+            'Degradációs költség', ...
+            'BESS éves költség'}, ...
+            'Location', 'bestoutside');
+
+        if i == numel(couplings)
+            xlabel('BESS/PV arány [-]');
+        end
+    end
+
+    subplot(3, 1, 3);
+    hold on;
+    grid on;
+
+    for i = 1:numel(couplings)
+        c = couplings(i);
+        sub = T(T.coupling == c & T.BESS_PV_ratio > 0, :);
+        sub = sortrows(sub, 'BESS_PV_ratio');
+
+        plot(sub.BESS_PV_ratio, sub.netAnnualSavingVsNoBess_HUF_per_year ./ 1e6, '-o', ...
+            'LineWidth', 1.5, ...
+            'MarkerSize', 4, ...
+            'DisplayName', upper(c));
+    end
+
+    yline(0, 'k-');
+    xlabel('BESS/PV arány [-]');
+    ylabel('millió Ft/év');
+    title('Nettó éves eredmény');
+    legend('Location', 'best');
+
+    local_save_figure(fig, outputFolder, 'thesis_combined_savings_vs_noBESS_ac_dc');
 end
 
 
