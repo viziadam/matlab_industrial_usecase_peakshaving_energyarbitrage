@@ -5,36 +5,63 @@ function figs = plot_energy_only_thesis_evaluation(T, cfg, outputFolder)
 % Nem valaszt legjobb jeloltet, hanem a teljes BESS/PV merethalot mutatja
 % AC es DC csatolasra.
 %
+% Backward compatible mukodes:
+%   - ha a regi results fajlokban meg nincsenek energiaaramlasi / veszteseg
+%     oszlopok, akkor ezeket az abrakat kihagyja;
+%   - a gazdasagi/NVP abra a regi eredmenyekbol is elkeszul, mert ehhez
+%     elegendoek a korabban is mentett koltseg- es SoH-metrikak.
+%
 % Abrak:
-%   1) Energiaaramlasok a teljes BESS/PV griden
-%   2) Vesztesegkomponensek a teljes BESS/PV griden
+%   1) Energiaaramlasok a teljes BESS/PV griden, ha vannak hozza oszlopok
+%   2) Vesztesegkomponensek a teljes BESS/PV griden, ha vannak hozza oszlopok
 %   3) Megtakaritas, BESS eves SoH CAPEX/OPEX es idoszaki NPV
 
-    requiredColumns = { ...
+    requiredEconomicColumns = { ...
         'coupling', ...
         'BESS_PV_ratio', ...
-        'pvToLoad_kWh', ...
-        'gridToLoad_kWh', ...
-        'bessToLoad_kWh', ...
-        'pvToBess_kWh', ...
-        'inverterLoss_kWh', ...
-        'dcdcLoss_kWh', ...
-        'bessInternalLoss_kWh', ...
-        'clippedEnergy_kWh', ...
         'energySavingVsNoBess_HUF_per_year', ...
         'bessAnnualCapexOpex_HUF', ...
         'bessOpexAnnual_HUF'};
 
-    local_require_columns(T, requiredColumns);
+    local_require_columns(T, requiredEconomicColumns, true);
 
     T = T(logical(T.wasSimulated) & ~logical(T.hasError), :);
     T = T(isfinite(T.BESS_PV_ratio), :);
 
     T = local_add_present_value_columns(T, cfg);
 
+    flowColumns = { ...
+        'pvToLoad_kWh', ...
+        'gridToLoad_kWh', ...
+        'bessToLoad_kWh', ...
+        'pvToBess_kWh'};
+
+    lossColumns = { ...
+        'inverterLoss_kWh', ...
+        'dcdcLoss_kWh', ...
+        'bessInternalLoss_kWh', ...
+        'clippedEnergy_kWh'};
+
+    hasFlowColumns = local_has_columns(T, flowColumns);
+    hasLossColumns = local_has_columns(T, lossColumns);
+
     figs = struct();
-    figs.energyFlows = local_plot_energy_flows(T, outputFolder);
-    figs.losses = local_plot_losses(T, outputFolder);
+    figs.energyFlows = [];
+    figs.losses = [];
+    figs.economics = [];
+
+    if hasFlowColumns
+        figs.energyFlows = local_plot_energy_flows(T, outputFolder);
+    else
+        local_print_skip_message('Energiaáramlási ábra', flowColumns);
+    end
+
+    if hasLossColumns
+        figs.losses = local_plot_losses(T, outputFolder);
+    else
+        local_print_skip_message('Veszteségkomponens ábra', lossColumns);
+    end
+
     figs.economics = local_plot_economics_and_npv(T, outputFolder);
 end
 
@@ -210,16 +237,45 @@ function sub = local_sorted_coupling_table(T, coupling)
 end
 
 
-function local_require_columns(T, colNames)
+function tf = local_has_columns(T, colNames)
 
-    for i = 1:numel(colNames)
-        if ~ismember(colNames{i}, T.Properties.VariableNames)
-            error(['Hiányzó candidateTable oszlop az energy-only kiértékeléshez: %s\n', ...
-                   'Futtasd újra az energy_only teljes szimulációt, mert ezek a metrikák ', ...
-                   'csak az új mentési logikával kerülnek a results fájlokba.'], ...
-                   colNames{i});
-        end
+    tf = all(ismember(colNames, T.Properties.VariableNames));
+end
+
+
+function local_require_columns(T, colNames, hardError)
+
+    if nargin < 3
+        hardError = true;
     end
+
+    missing = colNames(~ismember(colNames, T.Properties.VariableNames));
+
+    if isempty(missing)
+        return;
+    end
+
+    msg = sprintf('Hiányzó candidateTable oszlop(ok): %s', strjoin(string(missing), ', '));
+
+    if hardError
+        error('%s', msg);
+    else
+        warning('%s', msg);
+    end
+end
+
+
+function local_print_skip_message(plotName, missingColumns)
+
+    fprintf('\n%s kihagyva.\n', plotName);
+    fprintf('A mentett eredményfájlok nem tartalmazzák az ehhez szükséges új oszlopokat:\n');
+
+    for i = 1:numel(missingColumns)
+        fprintf('  - %s\n', missingColumns{i});
+    end
+
+    fprintf(['A gazdasági/NVP ábra ettől még elkészül. ', ...
+             'Az energiaáramlási és veszteségábrákhoz újra kell futtatni az energy_only szimulációt.\n']);
 end
 
 
@@ -234,6 +290,6 @@ function local_save_figure(fig, outputFolder, fileName)
     try
         exportgraphics(fig, fullfile(outputFolder, [fileName, '.png']), 'Resolution', 150);
     catch
-        saveas(fig, fullfile(outputFolder, [fileName, '.png']));
+        saveas(fig, fullfile(outputFolder, [fileName, '.png']);
     end
 end
