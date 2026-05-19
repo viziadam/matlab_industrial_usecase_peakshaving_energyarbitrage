@@ -290,6 +290,6 @@ function local_save_figure(fig, outputFolder, fileName)
     try
         exportgraphics(fig, fullfile(outputFolder, [fileName, '.png']), 'Resolution', 150);
     catch
-        saveas(fig, fullfile(outputFolder, [fileName, '.png']);
+        saveas(fig, fullfile(outputFolder, [fileName, '.png']));
     end
 end
