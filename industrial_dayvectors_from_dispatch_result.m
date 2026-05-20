@@ -12,11 +12,12 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 %
 % A topology eredmenyebol egyseges dayVectors strukturat keszit.
 %
-% Az uj energia-only kiertekeleshez kulon mentjuk:
+% A dolgozati kiertekeleshez kulon mentjuk:
 %   - PV -> fogyasztas
 %   - halozat -> fogyasztas
 %   - BESS -> fogyasztas
 %   - PV -> BESS toltes
+%   - halozat -> BESS toltes
 %   - inverter / DC-DC / BESS belso veszteseg
 %   - leszabalyozott energia
 
@@ -91,6 +92,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     P_grid_to_load_kW = P_grid_to_load_kW + remainingLoad_kW;
 
     P_pv_to_bess_kW = min(max(P_pv_available_kW - P_pv_to_load_kW, 0), P_bess_charge_kW);
+    P_grid_to_bess_kW = max(P_bess_charge_kW - P_pv_to_bess_kW, 0);
 
     P_loss_inv_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_inv_kW', 'E_loss_inv', N, dt_h);
     P_loss_dcdc_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_dcdc_kW', 'E_loss_dcdc', N, dt_h);
@@ -108,6 +110,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         'P_grid_to_load_kW', P_grid_to_load_kW; ...
         'P_bess_to_load_kW', P_bess_to_load_kW; ...
         'P_pv_to_bess_kW', P_pv_to_bess_kW; ...
+        'P_grid_to_bess_kW', P_grid_to_bess_kW; ...
         'P_loss_inv_kW', P_loss_inv_kW; ...
         'P_loss_dcdc_kW', P_loss_dcdc_kW; ...
         'P_loss_bess_internal_kW', P_loss_bess_internal_kW; ...
@@ -148,6 +151,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     dayVectors.P_grid_to_load_kW = P_grid_to_load_kW;
     dayVectors.P_bess_to_load_kW = P_bess_to_load_kW;
     dayVectors.P_pv_to_bess_kW = P_pv_to_bess_kW;
+    dayVectors.P_grid_to_bess_kW = P_grid_to_bess_kW;
 
     dayVectors.P_loss_inv_kW = P_loss_inv_kW;
     dayVectors.P_loss_dcdc_kW = P_loss_dcdc_kW;
