@@ -364,6 +364,8 @@ function plan = ems_day_ahead_planner_milp_contract( ...
 
     plan.exitflag = exitflag;
     plan.objective_value = fval;
+    plan.P_bess_plan_reference_side = "dc_bus";
+    
 
     energyMarket = sum(buy(:) .* Pgrid(:)) * dt_h;
 
