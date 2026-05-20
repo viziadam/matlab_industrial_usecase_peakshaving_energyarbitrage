@@ -19,7 +19,7 @@ function cfg = create_configurations(basePath)
     cfg.system.bessCoupling = "dc"; 
     
     % objectiveMode options: "peak_only" , "energy_only", "combined"
-    cfg.dispatch.objectiveMode = "peak_only";
+    cfg.dispatch.objectiveMode = "energy_only";
     %grid limit
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
@@ -31,7 +31,7 @@ function cfg = create_configurations(basePath)
 
     cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
-    cfg.grid.allowExport = false;
+    cfg.grid.allowExport = true;
     cfg.targetStepMin = 15;
     cfg.aggregationMethod = "mean";
 
@@ -172,7 +172,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     cfg.diagnostics = struct();
 
-    cfg.diagnostics.enabled = true;
+    cfg.diagnostics.enabled = false;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
 
     cfg.diagnostics.candidateIndex = 5;
