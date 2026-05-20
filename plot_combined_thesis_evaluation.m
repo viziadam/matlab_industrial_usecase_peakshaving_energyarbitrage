@@ -16,6 +16,7 @@ function figs = plot_combined_thesis_evaluation(T, cfg, outputFolder)
 %   2) Energiaaramlasok a teljes BESS/PV griden, ha vannak hozza oszlopok
 %   3) Vesztesegkomponensek a teljes BESS/PV griden, ha vannak hozza oszlopok
 %   4) Megtakaritas, BESS eves SoH CAPEX/OPEX es idoszaki NPV
+%   5) AC/DC topologiai kulonbsegek a teljes BESS/PV griden
 
     requiredMainColumns = { ...
         'coupling', ...
@@ -46,11 +47,21 @@ function figs = plot_combined_thesis_evaluation(T, cfg, outputFolder)
         'bessInternalLoss_kWh', ...
         'clippedEnergy_kWh'};
 
+    topologyColumns = { ...
+        'pvToBess_kWh', ...
+        'gridToBess_kWh', ...
+        'bessToLoad_kWh', ...
+        'inverterLoss_kWh', ...
+        'dcdcLoss_kWh', ...
+        'bessInternalLoss_kWh', ...
+        'combinedPeriodNPV_HUF'};
+
     figs = struct();
     figs.keyMetrics = local_plot_key_metrics(T, outputFolder);
     figs.energyFlows = [];
     figs.losses = [];
     figs.economics = local_plot_economics_and_npv(T, outputFolder);
+    figs.topologyComparison = [];
 
     if local_has_columns(T, flowColumns)
         figs.energyFlows = local_plot_energy_flows(T, outputFolder);
@@ -62,6 +73,12 @@ function figs = plot_combined_thesis_evaluation(T, cfg, outputFolder)
         figs.losses = local_plot_losses(T, outputFolder);
     else
         local_print_skip_message('Veszteségkomponens ábra', lossColumns);
+    end
+
+    if local_has_columns(T, topologyColumns)
+        figs.topologyComparison = local_plot_topology_comparison(T, outputFolder);
+    else
+        local_print_skip_message('AC/DC topológiai összehasonlító ábra', topologyColumns);
     end
 end
 
@@ -281,6 +298,85 @@ function fig = local_plot_economics_and_npv(T, outputFolder)
 end
 
 
+function fig = local_plot_topology_comparison(T, outputFolder)
+% LOCAL_PLOT_TOPOLOGY_COMPARISON
+%
+% Kifejezetten az AC es DC csatolas kozul adodo muszaki-gazdasagi
+% kulonbsegeket mutatja. A mutatok parositott BESS/PV aranyok menten
+% hasonlitjak ossze a ket topologiat.
+
+    dc = local_sorted_coupling_table(T, "dc");
+    ac = local_sorted_coupling_table(T, "ac");
+
+    [ratios, iDc, iAc] = intersect(dc.BESS_PV_ratio, ac.BESS_PV_ratio, 'stable');
+
+    if isempty(ratios)
+        error('Nincs közös BESS/PV arány az AC/DC topológiai összehasonlításhoz.');
+    end
+
+    dc = dc(iDc, :);
+    ac = ac(iAc, :);
+
+    dcStorageInput = dc.pvToBess_kWh + dc.gridToBess_kWh;
+    acStorageInput = ac.pvToBess_kWh + ac.gridToBess_kWh;
+
+    dcTotalLoss = dc.inverterLoss_kWh + dc.dcdcLoss_kWh + dc.bessInternalLoss_kWh;
+    acTotalLoss = ac.inverterLoss_kWh + ac.dcdcLoss_kWh + ac.bessInternalLoss_kWh;
+
+    dcStorageEff = 100 .* local_safe_divide_vec(dc.bessToLoad_kWh, dcStorageInput);
+    acStorageEff = 100 .* local_safe_divide_vec(ac.bessToLoad_kWh, acStorageInput);
+
+    dcPvStorageShare = 100 .* local_safe_divide_vec(dc.pvToBess_kWh, dcStorageInput);
+    acPvStorageShare = 100 .* local_safe_divide_vec(ac.pvToBess_kWh, acStorageInput);
+
+    dcLossPerBessOut = local_safe_divide_vec(dcTotalLoss, dc.bessToLoad_kWh);
+    acLossPerBessOut = local_safe_divide_vec(acTotalLoss, ac.bessToLoad_kWh);
+
+    npvDiff = dc.combinedPeriodNPV_HUF - ac.combinedPeriodNPV_HUF;
+    energySavingDiff = dc.energySavingVsNoBess_HUF_per_year - ac.energySavingVsNoBess_HUF_per_year;
+    contractDiff = dc.bestContract_kW - ac.bestContract_kW;
+
+    fig = figure('Name', 'AC/DC topológiai különbségek - combined', ...
+        'Position', [100, 50, 1400, 1050]);
+
+    subplot(4, 1, 1); hold on; grid on;
+    plot(ratios, dcStorageEff, '-o', 'LineWidth', 1.5, 'DisplayName', 'DC');
+    plot(ratios, acStorageEff, '-o', 'LineWidth', 1.5, 'DisplayName', 'AC');
+    ylabel('Hasznosítás [%]');
+    title('Tárolási út hatásfoka: BESS -> fogyasztás / BESS töltés');
+    legend('Location', 'best');
+
+    subplot(4, 1, 2); hold on; grid on;
+    plot(ratios, dcLossPerBessOut, '-o', 'LineWidth', 1.5, 'DisplayName', 'DC');
+    plot(ratios, acLossPerBessOut, '-o', 'LineWidth', 1.5, 'DisplayName', 'AC');
+    ylabel('kWh/kWh');
+    title('Veszteségigény hasznos BESS-kisütésre vetítve');
+    legend('Location', 'best');
+
+    subplot(4, 1, 3); hold on; grid on;
+    plot(ratios, dcPvStorageShare, '-o', 'LineWidth', 1.5, 'DisplayName', 'DC');
+    plot(ratios, acPvStorageShare, '-o', 'LineWidth', 1.5, 'DisplayName', 'AC');
+    ylabel('PV részarány [%]');
+    title('PV eredetű BESS töltés részaránya');
+    legend('Location', 'best');
+
+    subplot(4, 1, 4); hold on; grid on;
+    plot(ratios, npvDiff ./ 1e6, '-o', 'LineWidth', 1.5, 'DisplayName', 'NPV különbség: DC - AC');
+    plot(ratios, energySavingDiff ./ 1e6, '-o', 'LineWidth', 1.5, 'DisplayName', 'Energiamegtakarítás különbség: DC - AC');
+    yyaxis right;
+    plot(ratios, contractDiff, '--o', 'LineWidth', 1.2, 'DisplayName', 'Contract különbség: DC - AC');
+    ylabel('Contract különbség [kW]');
+    yyaxis left;
+    yline(0, 'k-');
+    ylabel('millió Ft');
+    xlabel('BESS/PV arány [-]');
+    title('Gazdasági és contract különbségek');
+    legend('Location', 'best');
+
+    local_save_figure(fig, outputFolder, 'thesis_combined_topology_difference_ac_dc');
+end
+
+
 function sub = local_sorted_coupling_table(T, coupling)
 
     sub = T(T.coupling == coupling, :);
@@ -330,7 +426,16 @@ function local_print_skip_message(plotName, missingColumns)
     end
 
     fprintf(['A fő mutató- és gazdasági/NPV ábra ettől még elkészül. ', ...
-             'Az energiaáramlási és veszteségábrákhoz újra kell futtatni a combined szimulációt.\n']);
+             'Az energiaáramlási, veszteség- és topológiai különbségábrákhoz ', ...
+             'újra kell futtatni a combined szimulációt.\n']);
+end
+
+
+function y = local_safe_divide_vec(a, b)
+
+    y = NaN(size(a));
+    mask = isfinite(a) & isfinite(b) & abs(b) > 1e-12;
+    y(mask) = a(mask) ./ b(mask);
 end
 
 
