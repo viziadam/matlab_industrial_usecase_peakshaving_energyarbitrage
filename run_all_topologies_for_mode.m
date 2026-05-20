@@ -37,7 +37,7 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     cfgBase = create_configurations(basePath);
     cfgBase.dispatch.objectiveMode = objectiveMode;
 
-    if objectiveMode == "energy_only"
+    if objectiveMode == "energy_only" || objectiveMode == "combined"
         cfgBase = add_energy_only_evaluation_metrics_to_cfg(cfgBase);
     end
 
@@ -65,7 +65,7 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         cfg.system.bessCoupling = coupling;
         cfg.dispatch.objectiveMode = objectiveMode;
 
-        if objectiveMode == "energy_only"
+        if objectiveMode == "energy_only" || objectiveMode == "combined"
             cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
         end
 
