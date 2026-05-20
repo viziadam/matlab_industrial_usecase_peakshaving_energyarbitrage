@@ -103,13 +103,16 @@ function plan = ems_day_ahead_planner_milp_contract( ...
 
     Plimit = safety * Pcontract;
 
-    Ppv = min(Ppvdc * pars.inv_eta, pars.P_inv_limit_ac);
+    %Ppv = min(Ppvdc * pars.inv_eta, pars.P_inv_limit_ac);
+    Ppv = max(Ppvdc, 0);
 
     PchMax  = pars.P_chg_max;
     PdisMax = pars.P_dis_max;
 
     etaCh  = pars.inv_eta * pars.eta_c * pars.eta_cell;
-    etaDis = pars.eta_cell * pars.eta_d * pars.inv_eta;
+    etaChGrid = pars.inv_eta * pars.eta_c * pars.eta_cell;
+    etaDisAc = pars.eta_cell * pars.eta_d * pars.inv_eta;
+    etaChPv = pars.eta_c * pars.eta_cell;
 
     deg = build_article_simple_degradation_costs(pars);
     cCh  = deg.cost_ch_huf_per_kWh;
@@ -141,9 +144,9 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     f = zeros(nVars, 1);
 
     f(iPgL)   = buyTotal * dt_h;
-    f(iPgB)   = buyTotal * dt_h + cCh * dt_h;
+    f(iPgB) = buyTotal * dt_h + cCh * pars.inv_eta * dt_h;
     f(iPpvB)  = cCh * dt_h;
-    f(iPbL)   = cDis * dt_h;
+    f(iPbL) = cDis * (1 / pars.inv_eta) * dt_h;
 
     % =====================================================================
     % Egyenlosegek
@@ -161,7 +164,7 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     beqPv = Ppv;
 
     for t = 1:N
-        AeqPv(t, iPpvL(t))   = 1;
+        AeqPv(t, iPpvL(t))   = 1 / pars.inv_eta;
         AeqPv(t, iPpvB(t))   = 1;
         AeqPv(t, iPspill(t)) = 1;
     end
@@ -169,8 +172,9 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     AeqSoc = zeros(N, nVars);
     beqSoc = zeros(N, 1);
 
-    aCh  = etaCh * dt_h / pars.E_cap_nom;
-    aDis = dt_h / etaDis / pars.E_cap_nom;
+    aChGrid = etaChGrid * dt_h / pars.E_cap_nom;
+    aChPv   = etaChPv   * dt_h / pars.E_cap_nom;
+    aDis    = dt_h / etaDisAc / pars.E_cap_nom;
 
     AeqSoc(1, iSoc(1)) = 1;
     beqSoc(1) = SoC0;
@@ -178,8 +182,8 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     for t = 2:N
         AeqSoc(t, iSoc(t))    =  1;
         AeqSoc(t, iSoc(t-1))  = -1;
-        AeqSoc(t, iPgB(t-1))  = -aCh;
-        AeqSoc(t, iPpvB(t-1)) = -aCh;
+        AeqSoc(t, iPgB(t-1))  = -aChGrid;
+        AeqSoc(t, iPpvB(t-1)) = -aChPv;
         AeqSoc(t, iPbL(t-1))  =  aDis;
     end
 
@@ -192,18 +196,21 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     A = [];
     b = [];
 
-    % Toltes / kisutes kizaras:
-    %   PgB + PpvB <= PchMax * mode
-    %   PbL <= PdisMax * (1 - mode)
+    % Töltés:
+    %   PgB * inv_eta + PpvB <= PchMax * mode
+    %
+    % Kisütés:
+    %   PbL / inv_eta <= PdisMax * (1 - mode)
+
     AMode = zeros(2*N, nVars);
     bMode = zeros(2*N, 1);
 
     for t = 1:N
-        AMode(t, iPgB(t))  = 1;
+        AMode(t, iPgB(t))  = pars.inv_eta;
         AMode(t, iPpvB(t)) = 1;
         AMode(t, iMode(t)) = -PchMax;
 
-        AMode(N+t, iPbL(t))  = 1;
+        AMode(N+t, iPbL(t))  = 1 / pars.inv_eta;
         AMode(N+t, iMode(t)) = PdisMax;
         bMode(N+t) = PdisMax;
     end
@@ -224,6 +231,52 @@ function plan = ems_day_ahead_planner_milp_contract( ...
 
     A = [A; AGrid];
     b = [b; bGrid];
+
+     % ---------------------------------------------------------------------
+    % Kozponti inverter korlat DC csatolasnal
+    % ---------------------------------------------------------------------
+    % DC-csatolt rendszerben a halozat -> BESS toltes a kozos DC/AC
+    % inverteren keresztul tortenik rectifier iranyban.
+    %
+    % Ezert a PgB valtozo nem lehet nagyobb, mint az inverter maximalis
+    % AC oldali teljesitmenye:
+    %
+    %   PgB <= P_inv_limit_ac
+    %
+    % Ez kulonosen energy-only uzemben fontos, mert ott a contract/grid
+    % korlat magas lehet, ezert enelkul a MILP irrealisan nagy
+    % halozat -> BESS toltest tervezhetne.
+
+    A_inv_grid_charge = zeros(N, nVars);
+    b_inv_grid_charge = pars.P_inv_limit_ac * ones(N, 1);
+
+    for t = 1:N
+        A_inv_grid_charge(t, iPgB(t)) = 1;
+    end
+
+    A = [A; A_inv_grid_charge];
+    b = [b; b_inv_grid_charge];
+
+     % ---------------------------------------------------------------------
+    % Kozponti inverter AC oldali kimeneti korlat
+    % ---------------------------------------------------------------------
+    % DC csatolasnal a PV -> fogyasztas es BESS -> fogyasztas aramlas
+    % ugyanazon kozos DC/AC inverteren keresztul jelenik meg AC oldalon.
+    %
+    % Ezert:
+    %
+    %   PpvL + PbL <= P_inv_limit_ac
+
+    A_inv_ac_output = zeros(N, nVars);
+    b_inv_ac_output = pars.P_inv_limit_ac * ones(N, 1);
+
+    for t = 1:N
+        A_inv_ac_output(t, iPpvL(t)) = 1;
+        A_inv_ac_output(t, iPbL(t))  = 1;
+    end
+
+    A = [A; A_inv_ac_output];
+    b = [b; b_inv_ac_output];
 
     % =====================================================================
     % Korlatok
@@ -270,8 +323,8 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     SoC    = x(iSoc);
 
     Pgrid = PgL + PgB;
-    Pch   = PgB + PpvB;
-    Pdis  = PbL;
+    Pch  = pars.inv_eta * PgB + PpvB;
+    Pdis = PbL / pars.inv_eta;
 
     Pover = max(Pgrid - Plimit, 0);
     Ppeak = max(PmonthOld, max(Pgrid));

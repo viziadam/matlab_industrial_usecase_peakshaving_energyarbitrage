@@ -172,10 +172,10 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     cfg.diagnostics = struct();
 
-    cfg.diagnostics.enabled = false;
+    cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
 
-    cfg.diagnostics.candidateIndex = 5;
+    cfg.diagnostics.candidateIndex = 11;
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;
         cfg.diagnostics.storePlannerDebug = true;
