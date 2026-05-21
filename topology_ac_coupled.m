@@ -8,7 +8,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     dt_h)
 % TOPOLOGY_AC_COUPLED
 %
-% AC-csatolt PV+BESS topológia.
+% AC-csatolt PV+BESS topologia.
 %
 % PV:
 %   PV DC -> PV inverter -> AC busz
@@ -16,9 +16,9 @@ function [step_res, state_bess] = topology_ac_coupled( ...
 % BESS:
 %   BESS pack -> BESS PCS/inverter -> AC busz
 %
-% Jelkonvenció:
-%   P_bess_ac_req_kW > 0  -> BESS kisütés
-%   P_bess_ac_req_kW < 0  -> BESS töltés
+% Jelkonvencio:
+%   P_bess_ac_req_kW > 0  -> BESS kisutes
+%   P_bess_ac_req_kW < 0  -> BESS toltes
 
     requiredParsFields = { ...
         'P_inv_limit_ac', ...
@@ -28,17 +28,17 @@ function [step_res, state_bess] = topology_ac_coupled( ...
 
     for i = 1:numel(requiredParsFields)
         if ~isfield(pars, requiredParsFields{i})
-            error('Hiányzó pars mező az AC topology-ban: pars.%s', ...
+            error('Hianyzo pars mezo az AC topology-ban: pars.%s', ...
                 requiredParsFields{i});
         end
     end
 
     if ~isfield(Prices, 'buy_huf')
-        error('Hiányzó Prices.buy_huf az AC topology-ban.');
+        error('Hianyzo Prices.buy_huf az AC topology-ban.');
     end
 
     if ~isfield(Prices, 'sell_huf')
-        error('Hiányzó Prices.sell_huf az AC topology-ban.');
+        error('Hianyzo Prices.sell_huf az AC topology-ban.');
     end
 
     P_bess_ac_req_kW = P_bess_ac_req_kW(:).';
@@ -48,19 +48,19 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     N = numel(P_load_kW);
 
     if numel(P_bess_ac_req_kW) ~= N
-        error('P_bess_ac_req_kW hossza eltér a load hossztól.');
+        error('P_bess_ac_req_kW hossza elter a load hossztol.');
     end
 
     if numel(P_pv_dc_kW) ~= N
-        error('P_pv_dc_kW hossza eltér a load hossztól.');
+        error('P_pv_dc_kW hossza elter a load hossztol.');
     end
 
     if numel(Prices.buy_huf(:)) ~= N
-        error('Prices.buy_huf hossza eltér a load hossztól.');
+        error('Prices.buy_huf hossza elter a load hossztol.');
     end
 
     if numel(Prices.sell_huf(:)) ~= N
-        error('Prices.sell_huf hossza eltér a load hossztól.');
+        error('Prices.sell_huf hossza elter a load hossztol.');
     end
 
     % =====================================================================
@@ -72,7 +72,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
         pars.inv_eta);
 
     % =====================================================================
-    % 2) AC BESS kérés -> pack oldali kérés
+    % 2) AC BESS request -> pack-side request
     % =====================================================================
     P_bess_ac_req_kW = min(P_bess_ac_req_kW,  pars.P_dis_max);
     P_bess_ac_req_kW = max(P_bess_ac_req_kW, -pars.P_chg_max);
@@ -92,7 +92,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     P_pack_req_kW = max(P_pack_req_kW, -pars.P_chg_max);
 
     % =====================================================================
-    % 3) BESS pack modell
+    % 3) BESS pack model
     % =====================================================================
     pack_params = struct();
     pack_params.T_vec = 25 * ones(1, N);
@@ -114,7 +114,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     P_pack_actual_kW = P_pack_actual_W / 1000;
 
     % =====================================================================
-    % 4) BESS PCS / inverter pack -> AC busz
+    % 4) BESS PCS / inverter: pack -> AC bus
     % =====================================================================
     [P_bess_ac_actual_kW, P_loss_bess_inv_kW, P_clip_bess_inv_kW] = ...
         hw_dcac_inverter( ...
@@ -123,14 +123,13 @@ function [step_res, state_bess] = topology_ac_coupled( ...
             pars.inv_eta);
 
     % =====================================================================
-    % 5) AC busz mérleg
+    % 5) AC bus balance
     % =====================================================================
     P_grid_final_kW = P_load_kW - P_pv_ac_kW - P_bess_ac_actual_kW;
-
     P_grid_base_kW = P_load_kW - P_pv_ac_kW;
 
     % =====================================================================
-    % 6) Metrikak osszegzese
+    % 6) Metrics
     % =====================================================================
     P_grid_net_kW    = P_grid_final_kW;
     P_grid_import_kW = max(P_grid_net_kW, 0);
@@ -138,8 +137,8 @@ function [step_res, state_bess] = topology_ac_coupled( ...
 
     P_bess_actual_kW = P_bess_ac_actual_kW;
 
-    % AC topology-ban a tényleges "spill" csak a PV inverter clipping.
-    % Ha export van, azt külön P_grid_export_kW mezőként mentjük, nem spillként.
+    % AC topology-ban a tenyleges PV nem hasznosult energia a PV inverter
+    % clipping. Ha export van, az kulon P_grid_export_kW mezoben marad.
     P_spill_kW = P_clip_pv_kW;
 
     step_res = struct();
@@ -159,15 +158,21 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     step_res.E_stored = pack_out.E_stored / 1000;
     step_res.E_discharged = pack_out.E_discharged / 1000;
 
-    % Kompatibilis mezők
+    % Compatible energy fields
     step_res.E_bess_dc = P_pack_actual_kW .* dt_h;
     step_res.E_bess_ac = P_bess_ac_actual_kW .* dt_h;
 
     step_res.E_loss_joule = pack_out.E_loss_joule / 1000;
     step_res.E_loss_dcdc = zeros(1, N);
 
+    % Osszes inverterveszteseg, valamint kulon bontva:
+    %   - central/PV inverter
+    %   - BESS PCS inverter
     step_res.E_loss_inv = ...
         (P_loss_pv_inv_kW + P_loss_bess_inv_kW) .* dt_h;
+
+    step_res.E_loss_central_inv = P_loss_pv_inv_kW .* dt_h;
+    step_res.E_loss_pcsb_inv = P_loss_bess_inv_kW .* dt_h;
 
     step_res.E_clip_inv = ...
         (P_clip_pv_kW + P_clip_bess_inv_kW) .* dt_h;
@@ -188,7 +193,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
 
     step_res.T_cell_max = max(pack_out.T_cell);
 
-    % Egységes actual teljesítménymezők plothoz / diagnosztikához
+    % Unified actual power fields for plotting / diagnostics
     step_res.P_grid_net_kW = P_grid_net_kW(:);
     step_res.P_grid_import_kW = P_grid_import_kW(:);
     step_res.P_grid_export_kW = P_grid_export_kW(:);
@@ -200,5 +205,11 @@ function [step_res, state_bess] = topology_ac_coupled( ...
     step_res.P_pack_actual_kW = P_pack_actual_kW(:);
 
     step_res.P_spill_kW = P_spill_kW(:);
-    
+
+    % Loss power fields for detailed evaluation
+    step_res.P_loss_inv_kW = (P_loss_pv_inv_kW + P_loss_bess_inv_kW).';
+    step_res.P_loss_central_inv_kW = P_loss_pv_inv_kW(:);
+    step_res.P_loss_pcsb_inv_kW = P_loss_bess_inv_kW(:);
+    step_res.P_loss_dcdc_kW = zeros(N, 1);
+    step_res.P_loss_bess_internal_kW = (pack_out.E_loss_joule(:) / 1000) ./ dt_h;
 end
