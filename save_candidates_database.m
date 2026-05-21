@@ -3,7 +3,7 @@ function save_candidates_database(configurationDatabase, cfg)
 %
 % Elmenti az aktualis futas candidate adatbazisat.
 % A fajlnev tartalmazza:
-%   - topologia: dc/ac
+%   - topologia: dc/ac/hybrid
 %   - mukodesi mod: peak_only/energy_only/combined
 %
 % Igy a kulonbozo futasok nem irjak felul egymast.
@@ -15,8 +15,12 @@ function save_candidates_database(configurationDatabase, cfg)
     coupling = lower(string(cfg.system.bessCoupling));
     objectiveMode = lower(string(cfg.dispatch.objectiveMode));
 
-    if ~(coupling == "dc" || coupling == "ac")
+    if ~(coupling == "dc" || coupling == "ac" || coupling == "hybrid")
         error('Invalid cfg.system.bessCoupling: %s', coupling);
+    end
+
+    if coupling == "hybrid" && objectiveMode ~= "combined"
+        error('Hybrid coupling is implemented only for combined mode.');
     end
 
     if ~(objectiveMode == "peak_only" || objectiveMode == "energy_only" || objectiveMode == "combined")
