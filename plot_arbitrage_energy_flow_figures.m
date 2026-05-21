@@ -92,7 +92,7 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
 
     tiledlayout(fig, 3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-    % =====================================================================
+     % =====================================================================
     % 1) Grid -> BESS es BESS -> load energia
     % =====================================================================
     ax1 = nexttile;
@@ -106,14 +106,16 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
     acGridToBess = local_vector(T, ratios, "ac", 'gridToBess_kWh') ./ 1000;
     acBessToLoad = local_vector(T, ratios, "ac", 'bessToLoad_kWh') ./ 1000;
 
-    dcBessLoss = max(dcGridToBess - dcBessToLoad, 0);
-    acBessLoss = max(acGridToBess - acBessToLoad, 0);
+    dcConversionDifference = dcGridToBess - dcBessToLoad;
+    acConversionDifference = acGridToBess - acBessToLoad;
 
     dcEta_pct = 100 .* local_safe_divide(dcBessToLoad, dcGridToBess);
     acEta_pct = 100 .* local_safe_divide(acBessToLoad, acGridToBess);
 
     local_grouped_stacked_bar_with_efficiency(ax1, ratios, ...
-        cat(3, [dcBessToLoad; dcBessLoss].', [acBessToLoad; acBessLoss].'), ...
+        cat(3, ...
+            [dcBessToLoad; dcConversionDifference].', ...
+            [acBessToLoad; acConversionDifference].'), ...
         {'BESS -> fogyaszto', 'Grid -> BESS es BESS -> fogyaszto kulonbsege'}, ...
         dcEta_pct, ...
         acEta_pct);
