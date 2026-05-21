@@ -37,15 +37,20 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     cfgBase = create_configurations(basePath);
     cfgBase.dispatch.objectiveMode = objectiveMode;
 
+    if ~isfield(cfgBase, 'profiling')
+        cfgBase.profiling = struct();
+    end
+
+    if ~isfield(cfgBase.profiling, 'enabled')
+        cfgBase.profiling.enabled = true;
+    end
+
     if objectiveMode == "energy_only" || objectiveMode == "combined"
         cfgBase = add_energy_only_evaluation_metrics_to_cfg(cfgBase);
     end
 
     data = build_data(cfgBase);
 
-    % ---------------------------------------------------------------------
-    % Ipari pelda bemutato abra
-    % ---------------------------------------------------------------------
     industrialCtxForOverview = prepare_industrial_simulation_context(data, cfgBase);
     overviewResult = plot_industrial_case_overview(cfgBase, industrialCtxForOverview); %#ok<NASGU>
 
