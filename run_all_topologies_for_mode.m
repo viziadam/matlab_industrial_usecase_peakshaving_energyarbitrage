@@ -129,7 +129,20 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     end
 
     if ~diagnosticMode
-        compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode); %#ok<NASGU>
+        compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode);
+
+        if objectiveMode == "energy_only" || objectiveMode == "combined"
+            compareResult.figures.arbitrageEnergyFlowFigures = ...
+                plot_arbitrage_energy_flow_figures( ...
+                    compareResult.tableAll, ...
+                    cfgBase, ...
+                    compareResult.outputFolder);
+
+            save(fullfile(compareResult.outputFolder, 'comparison_result.mat'), ...
+                'compareResult', ...
+                '-v7.3');
+        end
+
         runResult.compareResult = compareResult;
     end
 
