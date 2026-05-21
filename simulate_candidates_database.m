@@ -196,58 +196,66 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 
     if diagnosticMode && isfield(cfg.diagnostics, 'runEvaluation') && cfg.diagnostics.runEvaluation
 
-        evalCfgDiag = create_evaluation_config(cfg);
-        evalCfgDiag.output.baseFolder = fullfile(cfg.diagnostics.outputFolder, 'evaluation');
+        if coupling == "hybrid"
+            fprintf('\nHybrid diagnostic DB saved. Legacy diagnostic evaluation skipped for hybrid.\n');
+        else
+            evalCfgDiag = create_evaluation_config(cfg);
+            evalCfgDiag.output.baseFolder = fullfile(cfg.diagnostics.outputFolder, 'evaluation');
 
-        if ~exist(evalCfgDiag.output.baseFolder, 'dir')
-            mkdir(evalCfgDiag.output.baseFolder);
-        end
-
-        evalCfgDiag.output.saveEvaluationMat = true;
-        evalCfgDiag.output.saveEvaluationCsv = true;
-        evalCfgDiag.output.saveReportTables = true;
-        evalCfgDiag.plots.makePlots = true;
-        evalCfgDiag.plots.makeCandidateSweepPlots = false;
-        evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
-
-        evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
-
-        save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
-            'evaluationResult', '-v7.3');
-
-        fprintf('\nDiagnostic evaluation saved:\n%s\n', fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
-
-        diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
-
-        for ii = 1:numel(diagnosticCandidateList)
-            selectedCandidateIndex = diagnosticCandidateList(ii);
-
-            if ~isempty(baselineIdx) && selectedCandidateIndex == baselineIdx
-                continue;
+            if ~exist(evalCfgDiag.output.baseFolder, 'dir')
+                mkdir(evalCfgDiag.output.baseFolder);
             end
 
-            yearlyResult = evaluate_selected_candidate_yearly_budget(DB, cfg, evalCfgDiag, selectedCandidateIndex);
-            yearlyOutDir = fullfile(cfg.diagnostics.outputFolder, sprintf('candidate_%06d', selectedCandidateIndex), 'yearly_budget');
+            evalCfgDiag.output.saveEvaluationMat = true;
+            evalCfgDiag.output.saveEvaluationCsv = true;
+            evalCfgDiag.output.saveReportTables = true;
+            evalCfgDiag.plots.makePlots = true;
+            evalCfgDiag.plots.makeCandidateSweepPlots = false;
+            evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
 
-            if ~exist(yearlyOutDir, 'dir')
-                mkdir(yearlyOutDir);
+            evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
+
+            save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
+                'evaluationResult', '-v7.3');
+
+            fprintf('\nDiagnostic evaluation saved:\n%s\n', fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
+
+            diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
+
+            for ii = 1:numel(diagnosticCandidateList)
+                selectedCandidateIndex = diagnosticCandidateList(ii);
+
+                if ~isempty(baselineIdx) && selectedCandidateIndex == baselineIdx
+                    continue;
+                end
+
+                yearlyResult = evaluate_selected_candidate_yearly_budget(DB, cfg, evalCfgDiag, selectedCandidateIndex);
+                yearlyOutDir = fullfile(cfg.diagnostics.outputFolder, sprintf('candidate_%06d', selectedCandidateIndex), 'yearly_budget');
+
+                if ~exist(yearlyOutDir, 'dir')
+                    mkdir(yearlyOutDir);
+                end
+
+                yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
+                writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
+                save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), 'yearlyResult', '-v7.3');
             end
-
-            yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
-            writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
-            save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), 'yearlyResult', '-v7.3');
         end
     end
 
     if ~diagnosticMode && isfield(cfg, 'evaluation') && isfield(cfg.evaluation, 'runAfterSimulation') && cfg.evaluation.runAfterSimulation
-        evalCfg = create_evaluation_config(cfg);
-        evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+        if coupling == "hybrid"
+            fprintf('\nHybrid DB saved. Legacy evaluation skipped for hybrid.\n');
+        else
+            evalCfg = create_evaluation_config(cfg);
+            evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
 
-        if isfield(cfg.evaluation, 'saveEvaluationResult') && cfg.evaluation.saveEvaluationResult
-            save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), 'evaluationResult', '-v7.3');
+            if isfield(cfg.evaluation, 'saveEvaluationResult') && cfg.evaluation.saveEvaluationResult
+                save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), 'evaluationResult', '-v7.3');
+            end
+
+            fprintf('\nFull evaluation saved:\n%s\n', fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
         end
-
-        fprintf('\nFull evaluation saved:\n%s\n', fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
     end
 end
 
