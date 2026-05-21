@@ -36,8 +36,7 @@ function figureHandles = plot_arbitrage_energy_flow_figures(tableAll, cfg, outpu
 
     figureHandles = struct();
     figureHandles.sohAndBessEnergy = local_plot_soh_and_bess_energy(T, ratios, outputFolder);
-    figureHandles.gridPvFlows = local_plot_grid_and_pv_flows(T, ratios, outputFolder);
-    figureHandles.losses = local_plot_losses(T, ratios, outputFolder);
+    figureHandles.gridPvFlowsAndLosses = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder);
     figureHandles.idealSavings = local_plot_ideal_savings(T, ratios, cfg, outputFolder);
 end
 
@@ -86,34 +85,50 @@ end
 % =========================================================================
 % FIGURE 2
 % =========================================================================
-function fig = local_plot_grid_and_pv_flows(T, ratios, outputFolder)
+function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
 
-    fig = figure('Name', 'Arbitrage grid and PV energy flows', ...
-        'Position', [90, 90, 1550, 900]);
+    fig = figure('Name', 'Arbitrage grid, PV and loss energy flows', ...
+        'Position', [90, 70, 1550, 1050]);
 
-    tiledlayout(fig, 2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+    tiledlayout(fig, 3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+    % =====================================================================
+    % 1) Grid -> BESS es BESS -> load energia
+    % =====================================================================
     ax1 = nexttile;
-    hold(ax1, 'on'); grid(ax1, 'on'); box(ax1, 'on');
+    hold(ax1, 'on');
+    grid(ax1, 'on');
+    box(ax1, 'on');
 
-    dcGrid = local_vector(T, ratios, "dc", 'gridImport_kWh') ./ 1000;
     dcGridToBess = local_vector(T, ratios, "dc", 'gridToBess_kWh') ./ 1000;
     dcBessToLoad = local_vector(T, ratios, "dc", 'bessToLoad_kWh') ./ 1000;
 
-    acGrid = local_vector(T, ratios, "ac", 'gridImport_kWh') ./ 1000;
     acGridToBess = local_vector(T, ratios, "ac", 'gridToBess_kWh') ./ 1000;
     acBessToLoad = local_vector(T, ratios, "ac", 'bessToLoad_kWh') ./ 1000;
 
-    local_grouped_stacked_bar(ax1, ratios, ...
-        cat(3, [dcGrid; dcGridToBess; dcBessToLoad].', [acGrid; acGridToBess; acBessToLoad].'), ...
-        {'Teljes grid import', 'Grid -> BESS', 'BESS -> fogyaszto'});
+    dcBessLoss = max(dcGridToBess - dcBessToLoad, 0);
+    acBessLoss = max(acGridToBess - acBessToLoad, 0);
+
+    dcEta_pct = 100 .* local_safe_divide(dcBessToLoad, dcGridToBess);
+    acEta_pct = 100 .* local_safe_divide(acBessToLoad, acGridToBess);
+
+    local_grouped_stacked_bar_with_efficiency(ax1, ratios, ...
+        cat(3, [dcBessToLoad; dcBessLoss].', [acBessToLoad; acBessLoss].'), ...
+        {'BESS -> fogyaszto', 'Grid -> BESS es BESS -> fogyaszto kulonbsege'}, ...
+        dcEta_pct, ...
+        acEta_pct);
 
     ylabel(ax1, 'Energia [MWh / szimulalt idoszak]');
-    title(ax1, 'Halozati import es BESS energiaaramlasok');
+    title(ax1, 'Grid -> BESS energia es BESS -> fogyaszto energia');
     local_apply_bess_axis(ax1, T, ratios);
 
+    % =====================================================================
+    % 2) PV energia hasznositasa
+    % =====================================================================
     ax2 = nexttile;
-    hold(ax2, 'on'); grid(ax2, 'on'); box(ax2, 'on');
+    hold(ax2, 'on');
+    grid(ax2, 'on');
+    box(ax2, 'on');
 
     dcPvTotal = local_vector(T, ratios, "dc", 'pvEnergyAvailable_kWh') ./ 1000;
     dcPvToLoad = local_vector(T, ratios, "dc", 'pvToLoad_kWh') ./ 1000;
@@ -126,27 +141,21 @@ function fig = local_plot_grid_and_pv_flows(T, ratios, outputFolder)
     acPvUnused = max(acPvTotal - acPvToLoad - acPvToBess, 0);
 
     local_grouped_stacked_bar(ax2, ratios, ...
-        cat(3, [dcPvToLoad; dcPvToBess; dcPvUnused].', [acPvToLoad; acPvToBess; acPvUnused].'), ...
+        cat(3, [dcPvToLoad; dcPvToBess; dcPvUnused].', ...
+               [acPvToLoad; acPvToBess; acPvUnused].'), ...
         {'PV -> fogyaszto', 'PV -> BESS', 'Nem hasznositott PV energia'});
 
     ylabel(ax2, 'Energia [MWh / szimulalt idoszak]');
     title(ax2, 'PV energia hasznositasa');
     local_apply_bess_axis(ax2, T, ratios);
 
-    local_save_figure(fig, outputFolder, 'arbitrage_02_grid_pv_energy_flows');
-end
-
-
-% =========================================================================
-% FIGURE 3
-% =========================================================================
-function fig = local_plot_losses(T, ratios, outputFolder)
-
-    fig = figure('Name', 'Arbitrage loss stack', ...
-        'Position', [100, 100, 1500, 700]);
-
-    ax = axes(fig);
-    hold(ax, 'on'); grid(ax, 'on'); box(ax, 'on');
+    % =====================================================================
+    % 3) Vesztesegkomponensek
+    % =====================================================================
+    ax3 = nexttile;
+    hold(ax3, 'on');
+    grid(ax3, 'on');
+    box(ax3, 'on');
 
     dcCentral = local_vector(T, ratios, "dc", 'centralInverterLoss_kWh') ./ 1000;
     dcPcsb = local_vector(T, ratios, "dc", 'pcsbInverterLoss_kWh') ./ 1000;
@@ -158,15 +167,18 @@ function fig = local_plot_losses(T, ratios, outputFolder)
     acDcdc = local_vector(T, ratios, "ac", 'dcdcLoss_kWh') ./ 1000;
     acBess = local_vector(T, ratios, "ac", 'bessInternalLoss_kWh') ./ 1000;
 
-    local_grouped_stacked_bar(ax, ratios, ...
-        cat(3, [dcCentral; dcPcsb; dcDcdc; dcBess].', [acCentral; acPcsb; acDcdc; acBess].'), ...
+    local_grouped_stacked_bar(ax3, ratios, ...
+        cat(3, [dcCentral; dcPcsb; dcDcdc; dcBess].', ...
+               [acCentral; acPcsb; acDcdc; acBess].'), ...
         {'Kozponti inverter', 'BESS PCS inverter', 'DC/DC konverter', 'BESS belso'});
 
-    ylabel(ax, 'Veszteseg [MWh / szimulalt idoszak]');
-    title(ax, 'Energiaatalakitasi es BESS vesztesegkomponensek');
-    local_apply_bess_axis(ax, T, ratios);
+    ylabel(ax3, 'Veszteseg [MWh / szimulalt idoszak]');
+    title(ax3, 'Energiaatalakitasi es BESS vesztesegkomponensek');
+    local_apply_bess_axis(ax3, T, ratios);
 
-    local_save_figure(fig, outputFolder, 'arbitrage_03_loss_components');
+    sgtitle(fig, 'Grid-, PV- es vesztesegaramlasok AC es DC topologia szerint');
+
+    local_save_figure(fig, outputFolder, 'arbitrage_02_grid_pv_energy_flows');
 end
 
 
@@ -211,7 +223,7 @@ function fig = local_plot_ideal_savings(T, ratios, cfg, outputFolder)
     local_apply_bess_axis(ax2, T, ratios);
     legend(ax2, 'Location', 'best');
 
-    local_save_figure(fig, outputFolder, 'arbitrage_04_current_vs_ideal_savings');
+    local_save_figure(fig, outputFolder, 'arbitrage_03_current_vs_ideal_savings');
 end
 
 
@@ -415,4 +427,91 @@ function local_save_figure(fig, outputFolder, fileName)
     catch
         saveas(fig, fullfile(outputFolder, [fileName, '.png']));
     end
+end
+
+function local_grouped_stacked_bar_with_efficiency(ax, ratios, data3d, legendLabels, dcEta_pct, acEta_pct)
+% LOCAL_GROUPED_STACKED_BAR_WITH_EFFICIENCY
+%
+% data3d: nRatio x nStack x 2
+%   (:,:,1) = DC stacked oszlopok
+%   (:,:,2) = AC stacked oszlopok
+%
+% Az oszlopok a bal y tengelyen energiaerteket mutatnak.
+% A DC es AC hatasfokgorbek a jobb y tengelyen jelennek meg.
+
+    n = numel(ratios);
+    nStack = size(data3d, 2);
+
+    width = 0.36;
+    offset = 0.20;
+
+    baseX = 1:n;
+    xDC = baseX - offset;
+    xAC = baseX + offset;
+
+    yyaxis(ax, 'left');
+
+    bDC = bar(ax, xDC, data3d(:, :, 1), width, 'stacked');
+    bAC = bar(ax, xAC, data3d(:, :, 2), width, 'stacked');
+
+    for k = 1:nStack
+        bAC(k).FaceColor = bDC(k).FaceColor;
+        bAC(k).HandleVisibility = 'off';
+    end
+
+    ylabel(ax, 'Energia [MWh / szimulalt idoszak]');
+
+    yyaxis(ax, 'right');
+
+    p1 = plot(ax, baseX, dcEta_pct, '-o', ...
+        'LineWidth', 1.5, ...
+        'MarkerSize', 5, ...
+        'DisplayName', 'DC hatasfok');
+
+    p2 = plot(ax, baseX, acEta_pct, '-s', ...
+        'LineWidth', 1.5, ...
+        'MarkerSize', 5, ...
+        'DisplayName', 'AC hatasfok');
+
+    ylabel(ax, 'Hatasfok [%]');
+
+    finiteEta = [dcEta_pct(:); acEta_pct(:)];
+    finiteEta = finiteEta(isfinite(finiteEta));
+
+    if ~isempty(finiteEta)
+        yMin = max(0, min(finiteEta) - 5);
+        yMax = min(110, max(finiteEta) + 5);
+
+        if yMax <= yMin
+            yMin = 0;
+            yMax = 100;
+        end
+
+        ylim(ax, [yMin, yMax]);
+    else
+        ylim(ax, [0, 100]);
+    end
+
+    yyaxis(ax, 'left');
+
+    yl = ylim(ax);
+    yText = yl(1) + 0.96 * (yl(2) - yl(1));
+
+    for i = 1:n
+        text(ax, xDC(i), yText, 'DC', ...
+            'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'top', ...
+            'FontSize', 8, ...
+            'Rotation', 90);
+
+        text(ax, xAC(i), yText, 'AC', ...
+            'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'top', ...
+            'FontSize', 8, ...
+            'Rotation', 90);
+    end
+
+    legend(ax, [bDC(:); p1; p2], ...
+        [legendLabels(:); {'DC hatasfok'; 'AC hatasfok'}], ...
+        'Location', 'bestoutside');
 end

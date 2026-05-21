@@ -8,7 +8,7 @@
 %     dt_h)
 % % TOPOLOGY_AC_COUPLED
 % %
-% % AC-csatolt PV+BESS topológia.
+% % AC-csatolt PV+BESS topolÃ³gia.
 % %
 % % PV:
 % %   PV DC -> PV inverter -> AC busz
@@ -16,9 +16,9 @@
 % % BESS:
 % %   BESS pack -> BESS PCS/inverter -> AC busz
 % %
-% % Jelkonvenció:
-% %   P_bess_ac_req_kW > 0  -> BESS kisütés
-% %   P_bess_ac_req_kW < 0  -> BESS töltés
+% % JelkonvenciÃ³:
+% %   P_bess_ac_req_kW > 0  -> BESS kisÃ¼tÃ©s
+% %   P_bess_ac_req_kW < 0  -> BESS tÃ¶ltÃ©s
 % 
 %     requiredParsFields = { ...
 %         'P_inv_limit_ac', ...
@@ -28,17 +28,17 @@
 % 
 %     for i = 1:numel(requiredParsFields)
 %         if ~isfield(pars, requiredParsFields{i})
-%             error('Hiányzó pars mezo az AC topology-ban: pars.%s', ...
+%             error('HiÃ¡nyzÃ³ pars mezo az AC topology-ban: pars.%s', ...
 %                 requiredParsFields{i});
 %         end
 %     end
 % 
 %     if ~isfield(Prices, 'buy_huf')
-%         error('Hiányzó Prices.buy_huf az AC topology-ban.');
+%         error('HiÃ¡nyzÃ³ Prices.buy_huf az AC topology-ban.');
 %     end
 % 
 %     if ~isfield(Prices, 'sell_huf')
-%         error('Hiányzó Prices.sell_huf az AC topology-ban.');
+%         error('HiÃ¡nyzÃ³ Prices.sell_huf az AC topology-ban.');
 %     end
 % 
 %     P_bess_ac_req_kW = P_bess_ac_req_kW(:).';
@@ -48,19 +48,19 @@
 %     N = numel(P_load_kW);
 % 
 %     if numel(P_bess_ac_req_kW) ~= N
-%         error('P_bess_ac_req_kW hossza eltér a load hossztól.');
+%         error('P_bess_ac_req_kW hossza eltÃ©r a load hossztÃ³l.');
 %     end
 % 
 %     if numel(P_pv_dc_kW) ~= N
-%         error('P_pv_dc_kW hossza eltér a load hossztól.');
+%         error('P_pv_dc_kW hossza eltÃ©r a load hossztÃ³l.');
 %     end
 % 
 %     if numel(Prices.buy_huf(:)) ~= N
-%         error('Prices.buy_huf hossza eltér a load hossztól.');
+%         error('Prices.buy_huf hossza eltÃ©r a load hossztÃ³l.');
 %     end
 % 
 %     if numel(Prices.sell_huf(:)) ~= N
-%         error('Prices.sell_huf hossza eltér a load hossztól.');
+%         error('Prices.sell_huf hossza eltÃ©r a load hossztÃ³l.');
 %     end
 % 
 %     % =====================================================================
@@ -72,7 +72,7 @@
 %         pars.inv_eta);
 % 
 %     % =====================================================================
-%     % 2) AC BESS kérés -> pack oldali kérés
+%     % 2) AC BESS kÃ©rÃ©s -> pack oldali kÃ©rÃ©s
 %     % =====================================================================
 %     P_bess_ac_req_kW = min(P_bess_ac_req_kW,  pars.P_dis_max);
 %     P_bess_ac_req_kW = max(P_bess_ac_req_kW, -pars.P_chg_max);
@@ -123,7 +123,7 @@
 %             pars.inv_eta);
 % 
 %     % =====================================================================
-%     % 5) AC busz mérleg
+%     % 5) AC busz mÃ©rleg
 %     % =====================================================================
 %     P_grid_final_kW = P_load_kW - P_pv_ac_kW - P_bess_ac_actual_kW;
 % 
@@ -138,8 +138,8 @@
 % 
 %     P_bess_actual_kW = P_bess_ac_actual_kW;
 % 
-%     % AC topology-ban a tényleges "spill" csak a PV inverter clipping.
-%     % Ha export van, azt külön P_grid_export_kW mezoként mentjük, nem spillként.
+%     % AC topology-ban a tÃ©nyleges "spill" csak a PV inverter clipping.
+%     % Ha export van, azt kÃ¼lÃ¶n P_grid_export_kW mezokÃ©nt mentjÃ¼k, nem spillkÃ©nt.
 %     P_spill_kW = P_clip_pv_kW;
 % 
 %     step_res = struct();
@@ -188,7 +188,7 @@
 % 
 %     step_res.T_cell_max = max(pack_out.T_cell);
 % 
-%     % Egységes actual teljesítménymezok plothoz / diagnosztikához
+%     % EgysÃ©ges actual teljesÃ­tmÃ©nymezok plothoz / diagnosztikÃ¡hoz
 %     step_res.P_grid_net_kW = P_grid_net_kW(:);
 %     step_res.P_grid_import_kW = P_grid_import_kW(:);
 %     step_res.P_grid_export_kW = P_grid_export_kW(:);
@@ -399,7 +399,7 @@ function [step_res, state_bess] = topology_ac_coupled( ...
         (P_loss_pv_inv_kW + P_loss_bess_pcs_kW) .* dt_h;
 
     step_res.E_loss_central_inv = P_loss_pv_inv_kW .* dt_h;
-    step_res.E_loss_pcsb_inv = P_loss_bess_inv_kW .* dt_h;
+    step_res.E_loss_pcsb_inv = P_loss_bess_pcs_kW .* dt_h;
 
     step_res.E_clip_inv = ...
         (P_clip_pv_kW + P_clip_pcs_req_kW + P_clip_pcs_actual_kW) .* dt_h;
