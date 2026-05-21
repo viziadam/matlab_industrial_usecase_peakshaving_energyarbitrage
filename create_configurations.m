@@ -1,35 +1,24 @@
 function cfg = create_configurations(basePath)
 % CREATE_CONFIGURATIONS
 %
-% Központi konfiguráció ipari grid-connected PV+BESS feladathoz:
+% Kozponti konfiguracio ipari grid-connected PV+BESS feladathoz:
 %   - peak shaving
-%   - energia arbitrázs
-%   - önfogyasztás
-%   - lekötött teljesítmény optimalizálás
-%
-% A metrikák továbbra is a cfg.output.scalarMetrics és
-% cfg.output.profileMetrics mezőkből jönnek.
+%   - energia arbitrazs
+%   - onfogyasztas
+%   - lekotott teljesitmeny optimalizalas
 
     cfg = struct();
 
     % =====================================================================
     % 1) System
     % =====================================================================
-    % bessCoupling modes: "dc", "ac"
-    cfg.system.bessCoupling = "dc"; 
-    
-    % objectiveMode options: "peak_only" , "energy_only", "combined"
+    cfg.system.bessCoupling = "dc";
+    cfg.system.useCase = "industrial_peak_shaving_arbitrage";
+
     cfg.dispatch.objectiveMode = "energy_only";
-    %grid limit
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
-
-    % No-BESS referencia lekotott teljesitmenye.
-    % Ezt hasznalja a noBESS baseline, nem futtat kulon contract optimalizalast.
     cfg.dispatch.noBessContract_kW = 700;
-
-
-    cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
     cfg.grid.allowExport = true;
     cfg.targetStepMin = 15;
@@ -51,10 +40,6 @@ function cfg = create_configurations(basePath)
     end
 
     % =====================================================================
-    % Industrial dispatch settings
-    % =====================================================================
-    
-    % =====================================================================
     % 3) Simulation horizon
     % =====================================================================
     cfg.analysis.simYears = 4;
@@ -63,15 +48,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 4) Fixed PV + inverter system
     % =====================================================================
-    % A PV/load/price adatok betöltése továbbra is a keretrendszerben marad.
-    % Itt csak a fix rendszer-paramétereket adjuk meg.
-
     cfg.dc.P_inv_kW = 550;
-    cfg.dc.inv_eta = 0.97;
-
-    % Ezek a run_single_bess_contract_search logikáját követik:
-    % PV_A = build_pv_cache(11, [95, 275], [274, 274], 0.325)
-    % PV_B = build_pv_cache(11, [70, 250], [100.5, 100.5], 0.325)
 
     cfg.pvA.tiltX = 11;
     cfg.pvA.tiltZ = [95, 275];
@@ -85,38 +62,53 @@ function cfg = create_configurations(basePath)
 
     cfg.pv.P_total_dc_kWp = ...
         sum(cfg.pvA.P_dc_kWp) + sum(cfg.pvB.P_dc_kWp);
-    
-    % 4)  =====================================================================
-    % Inverter / PCS efficiency models
-    % =====================================================================
-    % Kozponti PV inverter, peldaul 550 kW-os kozponti inverter.
-    % A hatasfok a relativ terheles fuggvenye.
-    cfg.dc.central_inv_eta_nom = 0.985;
-    cfg.dc.central_inv_eff_load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
-    cfg.dc.central_inv_eff_eta_points  = [0.00 0.90 0.955 0.975 0.983 0.987 0.985];
-
-    % BESS PCS / battery inverter.
-    % Ez kulon berendezes, ezert nem a kozponti PV inverter hatasfokat
-    % hasznaljuk.
-    cfg.bess.pcs_eta_nom = 0.965;
-    cfg.bess.pcs_eff_load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
-    cfg.bess.pcs_eff_eta_points  = [0.00 0.86 0.92 0.945 0.958 0.968 0.965];
-
-    % Backward compatibility:
-    % a regi pars.inv_eta mezot meghagyjuk, de mar csak fallback /
-    % egyszeru MILP-kozelites lehet.
-    cfg.dc.inv_eta = cfg.dc.central_inv_eta_nom;
 
     % =====================================================================
-    % 5) BESS candidate space
+    % 5) Power converter efficiency models
     % =====================================================================
-    % Itt már nem DCAC_ratio x BESS_PV_ratio az alap candidate tér,
-    % mert PV és inverter fix. A candidate-ek a BESS méretpárok.
+    % A szimulacioban harom teljesitmenyatalakito eszkoz szerepel:
+    %   1) central_inv: kozponti PV inverter / kozos DC/AC inverter
+    %   2) dcdc       : DC-csatolt BESS ag DC/DC konvertere
+    %   3) pcsb       : AC-csatolt BESS PCS invertere
+    % Mindegyik ugyanazt a teljesitmenyfuggo hatasfok-elvet hasznalja.
 
+    cfg.converter = struct();
+
+    cfg.converter.central_inv = struct();
+    cfg.converter.central_inv.eta_nom = 0.985;
+    cfg.converter.central_inv.load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
+    cfg.converter.central_inv.eta_points  = [0.00 0.90 0.955 0.975 0.983 0.987 0.985];
+
+    cfg.converter.dcdc = struct();
+    cfg.converter.dcdc.eta_nom = 0.985;
+    cfg.converter.dcdc.load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
+    cfg.converter.dcdc.eta_points  = [0.00 0.90 0.950 0.970 0.982 0.987 0.985];
+
+    cfg.converter.pcsb = struct();
+    cfg.converter.pcsb.eta_nom = 0.980;
+    cfg.converter.pcsb.load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
+    cfg.converter.pcsb.eta_points  = [0.00 0.88 0.930 0.955 0.972 0.982 0.980];
+
+    % Backward compatibility aliasok.
+    cfg.dc.central_inv_eta_nom = cfg.converter.central_inv.eta_nom;
+    cfg.dc.central_inv_eff_load_points = cfg.converter.central_inv.load_points;
+    cfg.dc.central_inv_eff_eta_points  = cfg.converter.central_inv.eta_points;
+
+    cfg.bess.dcdc_eta_nom = cfg.converter.dcdc.eta_nom;
+    cfg.bess.dcdc_eff_load_points = cfg.converter.dcdc.load_points;
+    cfg.bess.dcdc_eff_eta_points  = cfg.converter.dcdc.eta_points;
+
+    cfg.bess.pcs_eta_nom = cfg.converter.pcsb.eta_nom;
+    cfg.bess.pcs_eff_load_points = cfg.converter.pcsb.load_points;
+    cfg.bess.pcs_eff_eta_points  = cfg.converter.pcsb.eta_points;
+
+    cfg.dc.inv_eta = cfg.converter.central_inv.eta_nom;
+
+    % =====================================================================
+    % 6) BESS candidate space
+    % =====================================================================
     cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
     cfg.candidates.bessDuration_h = 2;
-
-    
 
     cfg.candidates.designFields = { ...
         'BESS_PV_ratio', ...
@@ -128,7 +120,7 @@ function cfg = create_configurations(basePath)
         'P_BESS_kW'};
 
     % =====================================================================
-    % 6) Contract search
+    % 7) Contract search
     % =====================================================================
     cfg.contractSearch.coarse_step_kW = 25;
     cfg.contractSearch.fine_step_kW = 10;
@@ -145,18 +137,14 @@ function cfg = create_configurations(basePath)
     cfg.contractSearch.validation.n_extreme_force = 4;
 
     % =====================================================================
-    % 7) Dispatch / economics
+    % 8) Dispatch / economics
     % =====================================================================
     cfg.dispatch.degradation_cost_per_kWh = 5.0;
-
-    % Ha nincs kemény hálózati limit, maradjon inf.
-    % Ha van pl. transzformátor vagy csatlakozási korlát:
-    % cfg.dispatch.P_grid_hard_cap_kW = 700;
     cfg.dispatch.P_grid_hard_cap_kW = 700;
     cfg.dispatch.P_contract_safety_factor = 0.90;
 
     % =====================================================================
-    % 8) Cost parameters
+    % 9) Cost parameters
     % =====================================================================
     cfg.cost.eur_to_huf = 350;
 
@@ -174,29 +162,24 @@ function cfg = create_configurations(basePath)
     cfg.cost.bess_opex_frac_per_year = 0.020;
     cfg.cost.inverter_opex_frac_per_year = 0.010;
 
-    % Fontos:
-    % Az energiaáras dispatch nem ezt az egyszerű értéket használja,
-    % hanem a napi Price.buy_huf vektorokat.
-    % Ez csak fallback / riport mező.
     cfg.cost.grid_import_huf_per_kWh = 75;
     cfg.cost.grid_export_huf_per_kWh = 0;
 
     % =====================================================================
-    % 9) Simulation / storage
+    % 10) Simulation / storage
     % =====================================================================
     cfg.sim.saveAfterEachCandidate = true;
     cfg.sim.verbose = true;
     cfg.sim.strictMetricSources = true;
 
     % =====================================================================
-    % 10) Diagnostics
+    % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-
     cfg.diagnostics.enabled = false;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
-
     cfg.diagnostics.candidateIndex = 11;
+
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;
         cfg.diagnostics.storePlannerDebug = true;
@@ -205,7 +188,6 @@ function cfg = create_configurations(basePath)
         cfg.diagnostics.closeFiguresAfterSave = false;
         cfg.diagnostics.printPlannerDebug = false;
         cfg.diagnostics.maxPrintedDebugDays = 15;
-
         cfg.diagnostics.makePlannerExecutionDebugPlot = true;
         cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
         cfg.diagnostics.makeDispatchDiagnosticPlots = true;
@@ -217,11 +199,11 @@ function cfg = create_configurations(basePath)
         cfg.diagnostics.closeFiguresAfterSave = false;
         cfg.diagnostics.printPlannerDebug = false;
         cfg.diagnostics.maxPrintedDebugDays = 15;
-
         cfg.diagnostics.makePlannerExecutionDebugPlot = false;
         cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
         cfg.diagnostics.makeDispatchDiagnosticPlots = false;
     end
+
     cfg.diagnostics.runEvaluation = true;
     cfg.diagnostics.outputFolder = fullfile(cfg.paths.results, 'diagnostics');
 
@@ -230,22 +212,15 @@ function cfg = create_configurations(basePath)
     end
 
     % =====================================================================
-    % Detail / selected day plotting configuration
+    % 12) Detail / selected day plotting configuration
     % =====================================================================
-    % Ez nem a diagnosztikai mód kapcsolója, hanem a full horizon futás
-    % részletes napmentésének konfigurációja.
-    %
-    % A prepare_industrial_simulation_context ebből készíti:
-    %   industrialCtx.detail_cfg
-
     cfg.detail = struct();
-
     cfg.detail.max_representative_plots = 8;
     cfg.detail.max_overrun_days = 8;
     cfg.detail.overrun_tolerance_kW = 1e-6;
 
     % =====================================================================
-    % 11) Evaluation
+    % 13) Evaluation
     % =====================================================================
     cfg.evaluation = struct();
 
@@ -259,14 +234,8 @@ function cfg = create_configurations(basePath)
     cfg.evaluation.selectionMode = "minObjectiveCost";
 
     % =====================================================================
-    % 12) OUTPUT METRICS - SCALAR
+    % 14) OUTPUT METRICS - SCALAR
     % =====================================================================
-    % Ezeket a dayVectors mezőket a horizon-szimuláció minden napra előállítja.
-    %
-    % A lényeg:
-    % Ha új alap metrikát akarsz menteni, ide add hozzá.
-    % Nem kell emiatt a candidate loopot módosítani.
-
     cfg.output.scalarMetrics = struct( ...
         'name', { ...
             'loadEnergy_kWh', ...
@@ -336,12 +305,8 @@ function cfg = create_configurations(basePath)
         });
 
     % =====================================================================
-    % 13) OUTPUT METRICS - SUMMARY
+    % 15) OUTPUT METRICS - SUMMARY
     % =====================================================================
-    % Ezek nem napi dayVectors mezőkből jönnek, hanem a teljes horizon
-    % futás összefoglalójából. Mégis cfg-ben vannak, így központilag
-    % kezelhetők.
-
     cfg.output.summaryMetrics = struct( ...
         'name', { ...
             'bestContract_kW', ...
@@ -359,7 +324,7 @@ function cfg = create_configurations(basePath)
         });
 
     % =====================================================================
-    % 14) OUTPUT METRICS - PROFILE
+    % 16) OUTPUT METRICS - PROFILE
     % =====================================================================
     cfg.output.profileMetrics = struct( ...
         'name', { ...
@@ -421,13 +386,8 @@ function cfg = create_configurations(basePath)
         });
 
     % =====================================================================
-    % 15) OUTPUT METRICS - DERIVED
+    % 17) OUTPUT METRICS - DERIVED
     % =====================================================================
-    % Ezeket a finalize_candidate_result számolja a candidateTable-ben
-    % már meglévő metrikákból.
-    %
-    % Ha új egyszerű származtatott mutató kell, itt add hozzá.
-
     cfg.output.derivedMetrics = struct( ...
         'name', { ...
             'gridImportReduction_kWh', ...
