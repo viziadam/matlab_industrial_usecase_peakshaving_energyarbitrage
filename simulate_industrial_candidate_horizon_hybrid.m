@@ -74,6 +74,10 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
     if isfield(running.summary, 'bestContract_kW'); running.summary.bestContract_kW = best_contract_kW; end
     if isfield(running.summary, 'finalSoC'); running.summary.finalSoC = full_result.finalSoC; end
     if isfield(running.summary, 'finalSoH'); running.summary.finalSoH = full_result.finalSoH; end
+    if isfield(running.summary, 'finalSoCDc'); running.summary.finalSoCDc = full_result.finalSoCdc; end
+    if isfield(running.summary, 'finalSoCAc'); running.summary.finalSoCAc = full_result.finalSoCac; end
+    if isfield(running.summary, 'finalSoHDc'); running.summary.finalSoHDc = full_result.finalSoHdc; end
+    if isfield(running.summary, 'finalSoHAc'); running.summary.finalSoHAc = full_result.finalSoHac; end
     if isfield(running.summary, 'contractSearchRuntime_s'); running.summary.contractSearchRuntime_s = contractSearchRuntime_s; end
     if isfield(running.summary, 'fullHorizonRuntime_s'); running.summary.fullHorizonRuntime_s = fullHorizonRuntime_s; end
 
