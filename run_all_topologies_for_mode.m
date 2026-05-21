@@ -5,6 +5,11 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
 %   - DC
 %   - AC
 %   - HYBRID csak combined modban
+%
+% Megjegyzes:
+%   A compare_ac_dc_results_for_mode tovabbra is csak a legacy AC/DC
+%   osszehasonlitasra szolgal. A hybrid eredmenyek kulon DB fajlba
+%   mentodnek, es kesobb kulon hybrid kiertekelo fajl dolgozza fel oket.
 
     if nargin < 1 || strlength(string(objectiveMode)) == 0
         objectiveMode = "combined";
@@ -86,6 +91,10 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
             cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
         end
 
+        if coupling == "hybrid"
+            cfg = add_hybrid_evaluation_metrics_to_cfg(cfg);
+        end
+
         cfg.paths.results = fullfile(cfgBase.paths.results, char(objectiveMode));
         cfg.paths.figures = fullfile(cfg.paths.results, 'figures');
 
@@ -133,9 +142,11 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
 
         save_candidates_database(DB, cfg);
 
-        if ~diagnosticMode
+        if ~diagnosticMode && coupling ~= "hybrid"
             evalCfg = create_evaluation_config(cfg);
             evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+        elseif ~diagnosticMode && coupling == "hybrid"
+            fprintf('\nHybrid DB saved. Legacy evaluation skipped for hybrid; use the future hybrid evaluator.\n');
         end
 
         runResult.(char(coupling)).cfg = cfg;
