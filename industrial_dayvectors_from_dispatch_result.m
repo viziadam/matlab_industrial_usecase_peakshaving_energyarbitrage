@@ -9,24 +9,9 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     C_contract_step_HUF, ...
     C_objective_step_HUF)
 % INDUSTRIAL_DAYVECTORS_FROM_DISPATCH_RESULT
-%
-% A topology eredmenyebol egyseges dayVectors strukturat keszit.
-%
-% A dolgozati kiertekeleshez kulon mentjuk:
-%   - PV -> fogyasztas
-%   - halozat -> fogyasztas
-%   - BESS -> fogyasztas
-%   - PV -> BESS toltes
-%   - halozat -> BESS toltes
-%   - inverter / DC-DC / BESS belso veszteseg
-%   - kulon kozponti inverter es BESS PCS inverter veszteseg
-%   - leszabalyozott energia
+% Egyseges dayVectors struktura AC, DC es hybrid topologiahoz.
 
-    requiredDcFields = { ...
-        'P_load_actual', ...
-        'P_pv_dc_actual', ...
-        'P_grid_no_bess_day', ...
-        'dt_h'};
+    requiredDcFields = {'P_load_actual', 'P_pv_dc_actual', 'P_grid_no_bess_day', 'dt_h'};
 
     for i = 1:numel(requiredDcFields)
         if ~isfield(dc, requiredDcFields{i})
@@ -34,12 +19,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         end
     end
 
-    requiredDayResFields = { ...
-        'E_grid_import', ...
-        'E_stored', ...
-        'E_discharged', ...
-        'P_curtailment_kW', ...
-        'SoC'};
+    requiredDayResFields = {'E_grid_import', 'E_stored', 'E_discharged', 'P_curtailment_kW', 'SoC'};
 
     for i = 1:numel(requiredDayResFields)
         if ~isfield(dayRes, requiredDayResFields{i})
@@ -47,12 +27,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         end
     end
 
-    requiredPlanFields = { ...
-        'P_grid_plan', ...
-        'P_ch_plan', ...
-        'P_dis_plan', ...
-        'P_curt_plan', ...
-        'SoC_plan'};
+    requiredPlanFields = {'P_grid_plan', 'P_ch_plan', 'P_dis_plan', 'P_curt_plan', 'SoC_plan'};
 
     for i = 1:numel(requiredPlanFields)
         if ~isfield(plan_today, requiredPlanFields{i})
@@ -76,48 +51,75 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 
     P_pv_available_kW = local_get_pv_available_ac(dayRes, P_pv_dc_kW, N);
 
-    % ---------------------------------------------------------------------
-    % Actual energiaaramlasi felbontas
-    % ---------------------------------------------------------------------
-    % A BESS kisutest kulon kezeljuk, hogy DC csatolasnal a kozos inverter
-    % kimenete ne rajzolodjon tevesen PV -> fogyasztas komponenskent.
-    P_bess_to_load_kW = min(P_bess_discharge_kW, P_load_kW);
+    isHybrid = isfield(plan_today, 'P_gbatt_dc_plan') || ...
+               isfield(dayRes, 'E_stored_dc') || ...
+               isfield(dayRes, 'SoC_dc');
 
-    remainingLoad_kW = max(P_load_kW - P_bess_to_load_kW, 0);
-    P_pv_to_load_kW = min(P_pv_available_kW, remainingLoad_kW);
+    if isHybrid
+        P_grid_to_load_kW = local_plan_or_zero(plan_today, 'P_gload_plan', N);
+        P_pv_to_load_kW = local_plan_or_zero(plan_today, 'P_pvload_plan', N);
 
-    remainingLoad_kW = max(remainingLoad_kW - P_pv_to_load_kW, 0);
-    P_grid_to_load_kW = min(P_grid_import_kW, remainingLoad_kW);
+        P_grid_to_bess_dc_kW = local_plan_or_zero(plan_today, 'P_gbatt_dc_plan', N);
+        P_grid_to_bess_ac_kW = local_plan_or_zero(plan_today, 'P_gbatt_ac_plan', N);
+        P_pv_to_bess_dc_kW = local_plan_or_zero(plan_today, 'P_pvbatt_dc_plan', N);
+        P_pv_to_bess_ac_kW = local_plan_or_zero(plan_today, 'P_pvbatt_ac_plan', N);
+        P_bess_dc_to_load_kW = local_plan_or_zero(plan_today, 'P_bload_dc_plan', N);
+        P_bess_ac_to_load_kW = local_plan_or_zero(plan_today, 'P_bload_ac_plan', N);
 
-    remainingLoad_kW = max(remainingLoad_kW - P_grid_to_load_kW, 0);
-    P_grid_to_load_kW = P_grid_to_load_kW + remainingLoad_kW;
+        P_pv_to_bess_kW = P_pv_to_bess_dc_kW + P_pv_to_bess_ac_kW;
+        P_grid_to_bess_kW = P_grid_to_bess_dc_kW + P_grid_to_bess_ac_kW;
+        P_bess_to_load_kW = P_bess_dc_to_load_kW + P_bess_ac_to_load_kW;
 
-    P_pv_to_bess_kW = min(max(P_pv_available_kW - P_pv_to_load_kW, 0), P_bess_charge_kW);
-    P_grid_to_bess_kW = max(P_bess_charge_kW - P_pv_to_bess_kW, 0);
+        if ~any(P_grid_to_load_kW) && ~any(P_pv_to_load_kW) && ~any(P_bess_to_load_kW)
+            P_bess_to_load_kW = min(P_bess_discharge_kW, P_load_kW);
+            remainingLoad_kW = max(P_load_kW - P_bess_to_load_kW, 0);
+            P_pv_to_load_kW = min(P_pv_available_kW, remainingLoad_kW);
+            remainingLoad_kW = max(remainingLoad_kW - P_pv_to_load_kW, 0);
+            P_grid_to_load_kW = min(P_grid_import_kW, remainingLoad_kW);
+        end
+    else
+        P_bess_to_load_kW = min(P_bess_discharge_kW, P_load_kW);
+
+        remainingLoad_kW = max(P_load_kW - P_bess_to_load_kW, 0);
+        P_pv_to_load_kW = min(P_pv_available_kW, remainingLoad_kW);
+
+        remainingLoad_kW = max(remainingLoad_kW - P_pv_to_load_kW, 0);
+        P_grid_to_load_kW = min(P_grid_import_kW, remainingLoad_kW);
+
+        remainingLoad_kW = max(remainingLoad_kW - P_grid_to_load_kW, 0);
+        P_grid_to_load_kW = P_grid_to_load_kW + remainingLoad_kW;
+
+        P_pv_to_bess_kW = min(max(P_pv_available_kW - P_pv_to_load_kW, 0), P_bess_charge_kW);
+        P_grid_to_bess_kW = max(P_bess_charge_kW - P_pv_to_bess_kW, 0);
+
+        P_grid_to_bess_dc_kW = zeros(N, 1);
+        P_grid_to_bess_ac_kW = zeros(N, 1);
+        P_pv_to_bess_dc_kW = zeros(N, 1);
+        P_pv_to_bess_ac_kW = zeros(N, 1);
+        P_bess_dc_to_load_kW = zeros(N, 1);
+        P_bess_ac_to_load_kW = zeros(N, 1);
+    end
+
+    P_bess_charge_dc_kW = local_energy_or_zero(dayRes, 'E_stored_dc', N, dt_h);
+    P_bess_charge_ac_kW = local_energy_or_zero(dayRes, 'E_stored_ac', N, dt_h);
+    P_bess_discharge_dc_kW = local_energy_or_zero(dayRes, 'E_discharged_dc', N, dt_h);
+    P_bess_discharge_ac_kW = local_energy_or_zero(dayRes, 'E_discharged_ac', N, dt_h);
 
     P_loss_inv_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_inv_kW', 'E_loss_inv', N, dt_h);
     P_loss_dcdc_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_dcdc_kW', 'E_loss_dcdc', N, dt_h);
     P_loss_bess_internal_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_bess_internal_kW', 'E_loss_joule', N, dt_h);
 
-    % Topologia-specifikus inverterveszteseg bontas.
-    % DC esetben a teljes inverterveszteseg a kozos DC/AC inverterhez tartozik.
-    % AC esetben a topology_ac_coupled kulon adja a PV inverter es BESS PCS
-    % vesztesegi mezoit.
+    P_loss_bess_internal_dc_kW = local_get_optional_energy_or_power_as_power( ...
+        dayRes, 'P_loss_bess_internal_dc_kW', 'E_loss_joule_dc', N, dt_h, zeros(N, 1));
+
+    P_loss_bess_internal_ac_kW = local_get_optional_energy_or_power_as_power( ...
+        dayRes, 'P_loss_bess_internal_ac_kW', 'E_loss_joule_ac', N, dt_h, zeros(N, 1));
+
     P_loss_central_inv_kW = local_get_optional_energy_or_power_as_power( ...
-        dayRes, ...
-        'P_loss_central_inv_kW', ...
-        'E_loss_central_inv', ...
-        N, ...
-        dt_h, ...
-        P_loss_inv_kW);
+        dayRes, 'P_loss_central_inv_kW', 'E_loss_central_inv', N, dt_h, P_loss_inv_kW);
 
     P_loss_pcsb_inv_kW = local_get_optional_energy_or_power_as_power( ...
-        dayRes, ...
-        'P_loss_pcsb_inv_kW', ...
-        'E_loss_pcsb_inv', ...
-        N, ...
-        dt_h, ...
-        zeros(N, 1));
+        dayRes, 'P_loss_pcsb_inv_kW', 'E_loss_pcsb_inv', N, dt_h, zeros(N, 1));
 
     vectorsToCheck = { ...
         'P_pv_available_kW', P_pv_available_kW; ...
@@ -132,11 +134,23 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         'P_bess_to_load_kW', P_bess_to_load_kW; ...
         'P_pv_to_bess_kW', P_pv_to_bess_kW; ...
         'P_grid_to_bess_kW', P_grid_to_bess_kW; ...
+        'P_grid_to_bess_dc_kW', P_grid_to_bess_dc_kW; ...
+        'P_grid_to_bess_ac_kW', P_grid_to_bess_ac_kW; ...
+        'P_pv_to_bess_dc_kW', P_pv_to_bess_dc_kW; ...
+        'P_pv_to_bess_ac_kW', P_pv_to_bess_ac_kW; ...
+        'P_bess_dc_to_load_kW', P_bess_dc_to_load_kW; ...
+        'P_bess_ac_to_load_kW', P_bess_ac_to_load_kW; ...
+        'P_bess_charge_dc_kW', P_bess_charge_dc_kW; ...
+        'P_bess_charge_ac_kW', P_bess_charge_ac_kW; ...
+        'P_bess_discharge_dc_kW', P_bess_discharge_dc_kW; ...
+        'P_bess_discharge_ac_kW', P_bess_discharge_ac_kW; ...
         'P_loss_inv_kW', P_loss_inv_kW; ...
         'P_loss_central_inv_kW', P_loss_central_inv_kW; ...
         'P_loss_pcsb_inv_kW', P_loss_pcsb_inv_kW; ...
         'P_loss_dcdc_kW', P_loss_dcdc_kW; ...
         'P_loss_bess_internal_kW', P_loss_bess_internal_kW; ...
+        'P_loss_bess_internal_dc_kW', P_loss_bess_internal_dc_kW; ...
+        'P_loss_bess_internal_ac_kW', P_loss_bess_internal_ac_kW; ...
         'SoC', SoC; ...
         'C_energy_step_HUF', C_energy_step_HUF(:); ...
         'C_energy_no_bess_step_HUF', C_energy_no_bess_step_HUF(:); ...
@@ -146,7 +160,6 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         'C_objective_step_HUF', C_objective_step_HUF(:)};
 
     for i = 1:size(vectorsToCheck, 1)
-
         name = vectorsToCheck{i, 1};
         vec = vectorsToCheck{i, 2};
 
@@ -157,31 +170,38 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     end
 
     dayVectors = struct();
-
     dayVectors.P_load_kW = P_load_kW;
     dayVectors.P_pv_available_kW = P_pv_available_kW;
-
     dayVectors.P_grid_import_kW = P_grid_import_kW;
     dayVectors.P_grid_import_no_bess_kW = P_grid_import_no_bess_kW;
-
     dayVectors.P_bess_charge_kW = P_bess_charge_kW;
     dayVectors.P_bess_discharge_kW = P_bess_discharge_kW;
     dayVectors.P_bess_throughput_kW = P_bess_throughput_kW;
-
     dayVectors.P_curtailment_kW = P_curtailment_kW;
-
     dayVectors.P_pv_to_load_kW = P_pv_to_load_kW;
     dayVectors.P_grid_to_load_kW = P_grid_to_load_kW;
     dayVectors.P_bess_to_load_kW = P_bess_to_load_kW;
     dayVectors.P_pv_to_bess_kW = P_pv_to_bess_kW;
     dayVectors.P_grid_to_bess_kW = P_grid_to_bess_kW;
 
+    dayVectors.P_grid_to_bess_dc_kW = P_grid_to_bess_dc_kW;
+    dayVectors.P_grid_to_bess_ac_kW = P_grid_to_bess_ac_kW;
+    dayVectors.P_pv_to_bess_dc_kW = P_pv_to_bess_dc_kW;
+    dayVectors.P_pv_to_bess_ac_kW = P_pv_to_bess_ac_kW;
+    dayVectors.P_bess_dc_to_load_kW = P_bess_dc_to_load_kW;
+    dayVectors.P_bess_ac_to_load_kW = P_bess_ac_to_load_kW;
+    dayVectors.P_bess_charge_dc_kW = P_bess_charge_dc_kW;
+    dayVectors.P_bess_charge_ac_kW = P_bess_charge_ac_kW;
+    dayVectors.P_bess_discharge_dc_kW = P_bess_discharge_dc_kW;
+    dayVectors.P_bess_discharge_ac_kW = P_bess_discharge_ac_kW;
+
     dayVectors.P_loss_inv_kW = P_loss_inv_kW;
     dayVectors.P_loss_central_inv_kW = P_loss_central_inv_kW;
     dayVectors.P_loss_pcsb_inv_kW = P_loss_pcsb_inv_kW;
     dayVectors.P_loss_dcdc_kW = P_loss_dcdc_kW;
     dayVectors.P_loss_bess_internal_kW = P_loss_bess_internal_kW;
-
+    dayVectors.P_loss_bess_internal_dc_kW = P_loss_bess_internal_dc_kW;
+    dayVectors.P_loss_bess_internal_ac_kW = P_loss_bess_internal_ac_kW;
     dayVectors.SoC = SoC;
 
     dayVectors.C_energy_step_HUF = C_energy_step_HUF(:);
@@ -196,6 +216,30 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     dayVectors.P_bess_discharge_plan_kW = plan_today.P_dis_plan(:);
     dayVectors.P_curtailment_plan_kW = plan_today.P_curt_plan(:);
     dayVectors.SoC_plan = plan_today.SoC_plan(:);
+end
+
+
+function v = local_plan_or_zero(plan_today, fieldName, N)
+
+    if isfield(plan_today, fieldName)
+        v = plan_today.(fieldName)(:);
+    else
+        v = zeros(N, 1);
+    end
+
+    v = local_vec(v, N);
+end
+
+
+function P = local_energy_or_zero(dayRes, energyField, N, dt_h)
+
+    if isfield(dayRes, energyField)
+        P = dayRes.(energyField)(:) ./ dt_h;
+    else
+        P = zeros(N, 1);
+    end
+
+    P = local_vec(P, N);
 end
 
 

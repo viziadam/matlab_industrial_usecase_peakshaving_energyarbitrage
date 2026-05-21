@@ -70,8 +70,11 @@ function fig = local_plot_soh_and_bess_energy(T, ratios, outputFolder)
     acCharge = local_vector(T, ratios, "ac", 'bessCharge_kWh') ./ 1000;
     acDis = local_vector(T, ratios, "ac", 'bessDischarge_kWh') ./ 1000;
 
+    dcRoundTripLoss = max(dcCharge - dcDis, 0);
+    acRoundTripLoss = max(acCharge - acDis, 0);
+
     local_grouped_stacked_bar(ax2, ratios, ...
-        cat(3, [dcDis; dcCharge - dcDis].', [acDis; acCharge - acDis].'), ...
+        cat(3, [dcDis, dcRoundTripLoss], [acDis, acRoundTripLoss]), ...
         {'BESS-bol kisutott energia', 'Round-trip veszteseg'});
 
     ylabel(ax2, 'Energia [MWh / szimulalt idoszak]');
@@ -92,7 +95,7 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
 
     tiledlayout(fig, 3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-     % =====================================================================
+    % =====================================================================
     % 1) Grid -> BESS es BESS -> load energia
     % =====================================================================
     ax1 = nexttile;
@@ -106,16 +109,16 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
     acGridToBess = local_vector(T, ratios, "ac", 'gridToBess_kWh') ./ 1000;
     acBessToLoad = local_vector(T, ratios, "ac", 'bessToLoad_kWh') ./ 1000;
 
-    dcConversionDifference = dcGridToBess - dcBessToLoad;
-    acConversionDifference = acGridToBess - acBessToLoad;
+    dcConversionDifference = max(dcGridToBess - dcBessToLoad, 0);
+    acConversionDifference = max(acGridToBess - acBessToLoad, 0);
 
     dcEta_pct = 100 .* local_safe_divide(dcBessToLoad, dcGridToBess);
     acEta_pct = 100 .* local_safe_divide(acBessToLoad, acGridToBess);
 
     local_grouped_stacked_bar_with_efficiency(ax1, ratios, ...
         cat(3, ...
-            [dcBessToLoad; dcConversionDifference].', ...
-            [acBessToLoad; acConversionDifference].'), ...
+            [dcBessToLoad, dcConversionDifference], ...
+            [acBessToLoad, acConversionDifference]), ...
         {'BESS -> fogyaszto', 'Grid -> BESS es BESS -> fogyaszto kulonbsege'}, ...
         dcEta_pct, ...
         acEta_pct);
@@ -143,8 +146,8 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
     acPvUnused = max(acPvTotal - acPvToLoad - acPvToBess, 0);
 
     local_grouped_stacked_bar(ax2, ratios, ...
-        cat(3, [dcPvToLoad; dcPvToBess; dcPvUnused].', ...
-               [acPvToLoad; acPvToBess; acPvUnused].'), ...
+        cat(3, [dcPvToLoad, dcPvToBess, dcPvUnused], ...
+               [acPvToLoad, acPvToBess, acPvUnused]), ...
         {'PV -> fogyaszto', 'PV -> BESS', 'Nem hasznositott PV energia'});
 
     ylabel(ax2, 'Energia [MWh / szimulalt idoszak]');
@@ -170,8 +173,8 @@ function fig = local_plot_grid_pv_flows_and_losses(T, ratios, outputFolder)
     acBess = local_vector(T, ratios, "ac", 'bessInternalLoss_kWh') ./ 1000;
 
     local_grouped_stacked_bar(ax3, ratios, ...
-        cat(3, [dcCentral; dcPcsb; dcDcdc; dcBess].', ...
-               [acCentral; acPcsb; acDcdc; acBess].'), ...
+        cat(3, [dcCentral, dcPcsb, dcDcdc, dcBess], ...
+               [acCentral, acPcsb, acDcdc, acBess]), ...
         {'Kozponti inverter', 'BESS PCS inverter', 'DC/DC konverter', 'BESS belso'});
 
     ylabel(ax3, 'Veszteseg [MWh / szimulalt idoszak]');
@@ -204,7 +207,7 @@ function fig = local_plot_ideal_savings(T, ratios, cfg, outputFolder)
     acLossValue = local_ideal_loss_value(T, ratios, "ac", cfg) ./ 1e6;
 
     local_grouped_stacked_bar(ax1, ratios, ...
-        cat(3, [dcCurrent; dcLossValue].', [acCurrent; acLossValue].'), ...
+        cat(3, [dcCurrent, dcLossValue], [acCurrent, acLossValue]), ...
         {'Jelenlegi energiaoldali megtakaritas', 'Idealizalt vesztesegmentes tobblet'});
 
     ylabel(ax1, 'Megtakaritas [millio HUF / szimulalt idoszak]');
@@ -268,11 +271,6 @@ function T = local_prepare_missing_columns(T, cfg)
         end
     end
 
-    % Ha a central/PCSB bontas meg nincs meg regi futasbol, akkor a teljes
-    % invertervesztesegbol keszitunk kompatibilis becslest:
-    %   DC: teljes inverterveszteseg -> kozponti inverter
-    %   AC: teljes inverterveszteseg -> kozponti inverter, PCSB ismeretlen 0
-    % Pontos bontashoz ujra kell futtatni a szimulaciot a friss kod utan.
     missingCentral = ~isfinite(T.centralInverterLoss_kWh);
     T.centralInverterLoss_kWh(missingCentral) = T.inverterLoss_kWh(missingCentral);
 
@@ -369,6 +367,8 @@ function local_grouped_stacked_bar(ax, ratios, data3d, legendLabels)
     width = 0.36;
     offset = 0.20;
 
+    local_validate_grouped_stacked_data(data3d, n);
+
     baseX = 1:n;
     xDC = baseX - offset;
     xAC = baseX + offset;
@@ -431,6 +431,7 @@ function local_save_figure(fig, outputFolder, fileName)
     end
 end
 
+
 function local_grouped_stacked_bar_with_efficiency(ax, ratios, data3d, legendLabels, dcEta_pct, acEta_pct)
 % LOCAL_GROUPED_STACKED_BAR_WITH_EFFICIENCY
 %
@@ -446,6 +447,8 @@ function local_grouped_stacked_bar_with_efficiency(ax, ratios, data3d, legendLab
 
     width = 0.36;
     offset = 0.20;
+
+    local_validate_grouped_stacked_data(data3d, n);
 
     baseX = 1:n;
     xDC = baseX - offset;
@@ -516,4 +519,21 @@ function local_grouped_stacked_bar_with_efficiency(ax, ratios, data3d, legendLab
     legend(ax, [bDC(:); p1; p2], ...
         [legendLabels(:); {'DC hatasfok'; 'AC hatasfok'}], ...
         'Location', 'bestoutside');
+end
+
+
+function local_validate_grouped_stacked_data(data3d, nExpectedRows)
+
+    if ndims(data3d) ~= 3
+        error('Grouped stacked data must be nRatio x nStack x 2.');
+    end
+
+    if size(data3d, 1) ~= nExpectedRows
+        error('Grouped stacked data row count (%d) differs from ratio count (%d).', ...
+            size(data3d, 1), nExpectedRows);
+    end
+
+    if size(data3d, 3) ~= 2
+        error('Grouped stacked data third dimension must be 2: DC and AC.');
+    end
 end

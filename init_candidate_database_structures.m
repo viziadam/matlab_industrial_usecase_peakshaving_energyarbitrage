@@ -1,17 +1,7 @@
 function DB = init_candidate_database_structures(data, cfg)
 % INIT_CANDIDATE_DATABASE_STRUCTURES
-%
-% Ipari grid-connected PV+BESS candidate adatbázis.
-%
-% Candidate tér:
-%   E_BESS_kWh x P_BESS_kW
-%
-% A PV és inverter méret fix, cfg-ből jön.
-% A kimentett alap metrikákat továbbra is a cfg.output.* listák határozzák meg.
+% Ipari grid-connected PV+BESS candidate adatbazis.
 
-    % =====================================================================
-    % 1) Validálás
-    % =====================================================================
     local_validate_data(data);
     local_validate_cfg(cfg);
 
@@ -19,62 +9,83 @@ function DB = init_candidate_database_structures(data, cfg)
     nT = numel(data.days(1).P_load_kW);
     dt_h = data.days(1).dt_h;
 
-    % =====================================================================
-    % 2) Candidate tartományok
-    % =====================================================================
-    BESS_PV_ratio_vec = cfg.candidates.BESS_PV_ratio_vec(:);
-
-    nCandidates = numel(BESS_PV_ratio_vec);
-
+    coupling = lower(string(cfg.system.bessCoupling));
     designFields = local_get_candidate_design_fields(cfg);
 
-    candidateTable = local_create_candidate_table(nCandidates, cfg, designFields);
-    % =====================================================================
-    % 3) Candidate table feltöltése
-    % =====================================================================
-    for idx = 1:nCandidates
-
-        bessRatio = BESS_PV_ratio_vec(idx);
-
-        design = struct();
-
-        design.BESS_PV_ratio = bessRatio;
-
-        design.P_PV_A_kW = sum(cfg.pvA.P_dc_kWp);
-        design.P_PV_B_kW = sum(cfg.pvB.P_dc_kWp);
-        design.P_PV_kW = design.P_PV_A_kW + design.P_PV_B_kW;
-
-        design.P_inv_kW = cfg.dc.P_inv_kW;
-
-        design.E_BESS_kWh = bessRatio * design.P_PV_kW;
-        design.P_BESS_kW = design.E_BESS_kWh / cfg.candidates.bessDuration_h;
-
-        candidateTable.candidateIndex(idx) = idx;
-    candidateTable.candidateID(idx) = string(sprintf('CAND_%06d', idx));
-
-        candidateTable = local_write_design_to_candidate_table( ...
-            candidateTable, ...
-            idx, ...
-            design, ...
-            designFields);
+    if coupling == "hybrid"
+        ratioVec = cfg.candidates.hybrid.BESS_PV_ratio_vec(:);
+        nCandidates = numel(ratioVec)^2;
+    else
+        ratioVec = cfg.candidates.BESS_PV_ratio_vec(:);
+        nCandidates = numel(ratioVec);
     end
 
-    % =====================================================================
-    % 4) DB struktúra
-    % =====================================================================
-    DB = struct();
+    candidateTable = local_create_candidate_table(nCandidates, cfg, designFields);
 
+    idx = 0;
+
+    if coupling == "hybrid"
+
+        for iDc = 1:numel(ratioVec)
+            for iAc = 1:numel(ratioVec)
+
+                idx = idx + 1;
+
+                dcRatio = ratioVec(iDc);
+                acRatio = ratioVec(iAc);
+
+                design = local_base_design(cfg);
+
+                design.BESS_PV_ratio_dc = dcRatio;
+                design.BESS_PV_ratio_ac = acRatio;
+                design.BESS_PV_ratio_total = dcRatio + acRatio;
+                design.BESS_PV_ratio = design.BESS_PV_ratio_total;
+
+                design.E_BESS_dc_kWh = dcRatio * design.P_PV_kW;
+                design.P_BESS_dc_kW = design.E_BESS_dc_kWh / cfg.candidates.bessDuration_h;
+
+                design.E_BESS_ac_kWh = acRatio * design.P_PV_kW;
+                design.P_BESS_ac_kW = design.E_BESS_ac_kWh / cfg.candidates.bessDuration_h;
+
+                design.E_BESS_kWh = design.E_BESS_dc_kWh + design.E_BESS_ac_kWh;
+                design.P_BESS_kW = design.P_BESS_dc_kW + design.P_BESS_ac_kW;
+
+                candidateTable.candidateIndex(idx) = idx;
+                candidateTable.candidateID(idx) = string(sprintf('HYB_%06d', idx));
+
+                candidateTable = local_write_design_to_candidate_table( ...
+                    candidateTable, idx, design, designFields);
+            end
+        end
+
+    else
+
+        for idx = 1:nCandidates
+
+            bessRatio = ratioVec(idx);
+            design = local_base_design(cfg);
+
+            design.BESS_PV_ratio = bessRatio;
+            design.E_BESS_kWh = bessRatio * design.P_PV_kW;
+            design.P_BESS_kW = design.E_BESS_kWh / cfg.candidates.bessDuration_h;
+
+            candidateTable.candidateIndex(idx) = idx;
+            candidateTable.candidateID(idx) = string(sprintf('CAND_%06d', idx));
+
+            candidateTable = local_write_design_to_candidate_table( ...
+                candidateTable, idx, design, designFields);
+        end
+    end
+
+    DB = struct();
     DB.version = "industrial_contract_peak_arbitrage_candidate_database_v1";
     DB.createdAt = datetime('now');
-
     DB.nCandidates = nCandidates;
     DB.nDays = nDays;
     DB.nT = nT;
     DB.dt_h = dt_h;
-
     DB.profileAxis = struct();
     DB.profileAxis.time_h = (0:nT-1) * dt_h;
-
     DB.cfgSnapshot = cfg;
     DB.candidateDesignFields = designFields;
 
@@ -90,17 +101,31 @@ function DB = init_candidate_database_structures(data, cfg)
 
     fprintf('Industrial candidate database initialized.\n');
     fprintf('Coupling: %s\n', string(cfg.system.bessCoupling));
-    fprintf('Candidate structure: BESS_PV_ratio\n');
-    fprintf('BESS/PV ratio candidates: %d\n', numel(BESS_PV_ratio_vec));
+
+    if coupling == "hybrid"
+        fprintf('Candidate structure: hybrid BESS_PV_ratio_dc x BESS_PV_ratio_ac\n');
+        fprintf('Hybrid ratio values: %d\n', numel(ratioVec));
+    else
+        fprintf('Candidate structure: BESS_PV_ratio\n');
+        fprintf('BESS/PV ratio candidates: %d\n', numel(ratioVec));
+    end
+
     fprintf('Total candidates: %d\n', nCandidates);
     fprintf('Days: %d\n', nDays);
     fprintf('Profile length: %d\n', nT);
 end
 
 
-% =========================================================================
-% DATA VALIDATION
-% =========================================================================
+function design = local_base_design(cfg)
+
+    design = struct();
+    design.P_PV_A_kW = sum(cfg.pvA.P_dc_kWp);
+    design.P_PV_B_kW = sum(cfg.pvB.P_dc_kWp);
+    design.P_PV_kW = design.P_PV_A_kW + design.P_PV_B_kW;
+    design.P_inv_kW = cfg.dc.P_inv_kW;
+end
+
+
 function local_validate_data(data)
 
     if ~isfield(data, 'days')
@@ -123,7 +148,6 @@ function local_validate_data(data)
     dt_h = data.days(1).dt_h;
 
     for d = 1:numel(data.days)
-
         if numel(data.days(d).P_load_kW) ~= nT
             error('All days must have the same P_load_kW length. Error at day %d.', d);
         end
@@ -135,21 +159,21 @@ function local_validate_data(data)
 end
 
 
-% =========================================================================
-% CFG VALIDATION
-% =========================================================================
 function local_validate_cfg(cfg)
 
     requiredTop = {'system', 'candidates', 'output', 'dc', 'pvA', 'pvB'};
     local_require_fields(cfg, requiredTop, 'cfg');
 
-    local_require_fields(cfg.candidates, ...
-        {'BESS_PV_ratio_vec', 'bessDuration_h', 'designFields'}, ...
-        'cfg.candidates');
+    coupling = lower(string(cfg.system.bessCoupling));
 
+    if coupling == "hybrid"
+        local_require_fields(cfg.candidates, {'hybrid', 'bessDuration_h', 'designFields'}, 'cfg.candidates');
+        local_require_fields(cfg.candidates.hybrid, {'BESS_PV_ratio_vec'}, 'cfg.candidates.hybrid');
+    else
+        local_require_fields(cfg.candidates, {'BESS_PV_ratio_vec', 'bessDuration_h', 'designFields'}, 'cfg.candidates');
+    end
 
     local_require_fields(cfg.output, {'scalarMetrics', 'profileMetrics'}, 'cfg.output');
-
     local_validate_metric_definitions(cfg.output.scalarMetrics, 'scalarMetrics');
     local_validate_metric_definitions(cfg.output.profileMetrics, 'profileMetrics');
 
@@ -186,7 +210,6 @@ function local_validate_metric_definitions(metrics, metricGroupName)
     end
 
     for i = 1:numel(metrics)
-
         if strlength(string(metrics(i).name)) == 0
             error('Empty metric name in cfg.output.%s at index %d.', metricGroupName, i);
         end
@@ -226,20 +249,14 @@ function local_validate_derived_metric_definitions(metrics)
 end
 
 
-% =========================================================================
-% DESIGN FIELD HANDLING
-% =========================================================================
 function designFields = local_get_candidate_design_fields(cfg)
-
     designFields = string(cfg.candidates.designFields(:)).';
 end
 
 
-function candidateTable = local_write_design_to_candidate_table( ...
-    candidateTable, idx, design, designFields)
+function candidateTable = local_write_design_to_candidate_table(candidateTable, idx, design, designFields)
 
     for i = 1:numel(designFields)
-
         fieldName = char(designFields(i));
 
         if ~ismember(fieldName, candidateTable.Properties.VariableNames)
@@ -247,7 +264,7 @@ function candidateTable = local_write_design_to_candidate_table( ...
         end
 
         if ~isfield(design, fieldName)
-            error('A design struktúra nem tartalmazza a következő mezőt: %s', fieldName);
+            error('A design struktura nem tartalmazza a kovetkezo mezot: %s', fieldName);
         end
 
         candidateTable.(fieldName)(idx) = design.(fieldName);
@@ -255,18 +272,13 @@ function candidateTable = local_write_design_to_candidate_table( ...
 end
 
 
-% =========================================================================
-% CANDIDATE TABLE
-% =========================================================================
 function T = local_create_candidate_table(n, cfg, designFields)
 
     T = table();
-
     T.candidateIndex = NaN(n, 1);
     T.candidateID = strings(n, 1);
 
     for i = 1:numel(designFields)
-
         fieldName = char(designFields(i));
 
         if ~ismember(fieldName, T.Properties.VariableNames)
@@ -282,7 +294,6 @@ function T = local_create_candidate_table(n, cfg, designFields)
     localMetricNames = local_collect_all_candidate_table_metric_names(cfg);
 
     for i = 1:numel(localMetricNames)
-
         col = char(localMetricNames(i));
 
         if ~ismember(col, T.Properties.VariableNames)
@@ -312,15 +323,11 @@ function metricNames = local_collect_all_candidate_table_metric_names(cfg)
 end
 
 
-% =========================================================================
-% BASE PROFILES
-% =========================================================================
 function baseProfiles = local_build_base_profiles(data)
 
     nDays = numel(data.days);
     nT = numel(data.days(1).P_load_kW);
     dt_h = data.days(1).dt_h;
-
     loadMat = zeros(nDays, nT);
 
     for d = 1:nDays
@@ -328,30 +335,22 @@ function baseProfiles = local_build_base_profiles(data)
     end
 
     baseProfiles = struct();
-
     baseProfiles.time_h = (0:nT-1) * dt_h;
-
     baseProfiles.loadMeanProfile_kW = mean(loadMat, 1);
     baseProfiles.loadPeakProfile_kW = max(loadMat, [], 1);
     baseProfiles.loadMinProfile_kW = min(loadMat, [], 1);
-
     baseProfiles.totalLoadEnergy_kWh = sum(loadMat, 'all') * dt_h;
     baseProfiles.dailyLoadEnergy_kWh = sum(loadMat, 2) * dt_h;
-
     baseProfiles.maxDailyLoadPeak_kW = max(max(loadMat, [], 2));
     baseProfiles.meanDailyLoadPeak_kW = mean(max(loadMat, [], 2));
 end
 
 
-% =========================================================================
-% CANDIDATE PROFILES
-% =========================================================================
 function profiles = local_init_candidate_profiles(nCandidates, nT, cfg)
 
     profiles = struct();
 
     for i = 1:numel(cfg.output.profileMetrics)
-
         metricName = char(cfg.output.profileMetrics(i).name);
 
         if ~isfield(profiles, metricName)
