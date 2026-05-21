@@ -1,231 +1,13 @@
-% function [running, simSummary, detail] = simulate_industrial_candidate_horizon( ...
-%     industrialCtx, design, cfg)
-% % SIMULATE_INDUSTRIAL_CANDIDATE_HORIZON
-% %
-% % Egy candidate teljes időhorizontos szimulációja.
-% %
-% % A coupling switch a run_full_horizon_for_fixed_contract belsejében van.
-% % Itt csak:
-% %   - BESS paraméterezés
-% %   - contract search
-% %   - full horizon futás
-% %   - summary metrikák cfg alapján
-% 
-%     requiredCtxFields = { ...
-%         'day_cache', ...
-%         'rep_set_proxy', ...
-%         'rep_set_valid', ...
-%         'tariff', ...
-%         'search_cfg', ...
-%         'detail_cfg'};
-% 
-%     for i = 1:numel(requiredCtxFields)
-%         if ~isfield(industrialCtx, requiredCtxFields{i})
-%             error('Hiányzó industrialCtx mező: industrialCtx.%s', requiredCtxFields{i});
-%         end
-%     end
-% 
-%     requiredDesignFields = { ...
-%         'E_BESS_kWh', ...
-%         'P_BESS_kW', ...
-%         'P_inv_kW'};
-% 
-%     for i = 1:numel(requiredDesignFields)
-%         if ~isfield(design, requiredDesignFields{i})
-%             error('Hiányzó design mező: design.%s', requiredDesignFields{i});
-%         end
-%     end
-% 
-%     if ~isfield(cfg, 'dispatch')
-%         error('Hiányzó cfg mező: cfg.dispatch');
-%     end
-% 
-%     if ~isfield(cfg.dispatch, 'degradation_cost_per_kWh')
-%         error('Hiányzó cfg mező: cfg.dispatch.degradation_cost_per_kWh');
-%     end
-% 
-%     if ~isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
-%         error('Hiányzó cfg mező: cfg.dispatch.P_grid_hard_cap_kW');
-%     end
-% 
-%     day_cache = industrialCtx.day_cache;
-%     tariff = industrialCtx.tariff;
-% 
-%     nT = numel(day_cache(1).P_load_actual);
-% 
-%     running = init_metrics(nT, cfg);
-% 
-%     isNoBessCandidate = ...
-%         design.E_BESS_kWh <= 0 || ...
-%         design.P_BESS_kW <= 0 || ...
-%         design.BESS_PV_ratio <= 0;
-% 
-%     if isNoBessCandidate
-% 
-%         [running, simSummary, detail] = simulate_industrial_no_bess_candidate_horizon( ...
-%             industrialCtx, ...
-%             design, ...
-%             cfg);
-% 
-%         return;
-%     end
-% 
-%     % =====================================================================
-%     % 1) BESS paraméterek
-%     % =====================================================================
-%     pars = base_battery_pars_nonideal_( ...
-%         design.E_BESS_kWh, ...
-%         design.P_BESS_kW);
-% 
-%     requiredParsFields = { ...
-%         'E_cap_nom', ...
-%         'P_rated'};
-% 
-%     for i = 1:numel(requiredParsFields)
-%         if ~isfield(pars, requiredParsFields{i})
-%             error('A base_battery_pars_nonideal_ kimenete nem tartalmazza: pars.%s', requiredParsFields{i});
-%         end
-%     end
-% 
-%     pars.P_inv_limit_ac = design.P_inv_kW;
-%     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
-% 
-%     pars.bessCoupling = lower(string(cfg.system.bessCoupling));
-% 
-%     % if ~isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
-%     %     error('Hiányzó cfg.dispatch.P_grid_hard_cap_kW.');
-%     % end
-%     % 
-%     % pars.P_grid_hard_cap_kW = cfg.dispatch.P_grid_hard_cap_kW;
-% 
-%     if ~isfield(cfg.dispatch, 'P_contract_safety_factor')
-%         error('Hiányzó cfg.dispatch.P_contract_safety_factor.');
-%     end
-% 
-%     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
-% 
-%     fprintf('\n--- CANDIDATE PARAMETER DEBUG ---\n');
-%     fprintf('design.E_BESS_kWh       = %.3f\n', design.E_BESS_kWh);
-%     fprintf('design.P_BESS_kW        = %.3f\n', design.P_BESS_kW);
-%     fprintf('design.P_inv_kW         = %.3f\n', design.P_inv_kW);
-%     fprintf('pars.E_cap_nom          = %.3f\n', pars.E_cap_nom);
-%     fprintf('pars.P_rated            = %.3f\n', pars.P_rated);
-%     fprintf('pars.P_inv_limit_ac     = %.3f\n', pars.P_inv_limit_ac);
-%     fprintf('pars.deg_cost_HUF/kWh   = %.3f\n', pars.degradation_cost_per_kWh);
-%     fprintf('pars.SoC_min           = %.3f\n', pars.SoC_min);
-%     fprintf('pars.SoC_max           = %.3f\n', pars.SoC_max);
-%     fprintf('pars.SoC_init          = %.3f\n', pars.SoC_init);
-% 
-%     if isfield(cfg.dispatch, 'P_grid_hard_cap_kW')
-%         fprintf('cfg.dispatch.P_grid_hard_cap_kW = %.3f\n', cfg.dispatch.P_grid_hard_cap_kW);
-%     end
-% 
-%     fprintf('---------------------------------\n');
-% 
-%     % =====================================================================
-%     % 2) Contract search
-%     % =====================================================================
-%     tSearch = tic;
-% 
-%     search_result = search_optimal_contract_capacity( ...
-%         day_cache, ...
-%         industrialCtx.rep_set_proxy, ...
-%         industrialCtx.rep_set_valid, ...
-%         pars, ...
-%         tariff, ...
-%         industrialCtx.search_cfg);
-% 
-%     contractSearchRuntime_s = toc(tSearch);
-% 
-%     if ~isfield(search_result, 'best_contract_kW')
-%         error('A search_optimal_contract_capacity kimenete nem tartalmazza: search_result.best_contract_kW');
-%     end
-% 
-%     best_contract_kW = search_result.best_contract_kW;
-% 
-%     % =====================================================================
-%     % 3) Full horizon
-%     % =====================================================================
-%     if ~isfield(cfg, 'diagnostics') || ...
-%        ~isfield(cfg.diagnostics, 'storeCandidateDetail')
-%         error('Hiányzó cfg mező: cfg.diagnostics.storeCandidateDetail');
-%     end
-% 
-%     store_detail = cfg.diagnostics.storeCandidateDetail;
-% 
-%     tFull = tic;
-% 
-%     [running, full_result, detail] = run_full_horizon_for_fixed_contract( ...
-%         day_cache, ...
-%         pars, ...
-%         tariff, ...
-%         best_contract_kW, ...
-%         running, ...
-%         cfg, ...
-%         store_detail, ...
-%         industrialCtx.detail_cfg);
-% 
-%     fullHorizonRuntime_s = toc(tFull);
-% 
-%     % =====================================================================
-%     % 4) Summary source
-%     % =====================================================================
-%     summarySource = struct();
-% 
-%     summarySource.bestContract_kW = best_contract_kW;
-%     summarySource.finalSoC = full_result.finalSoC;
-%     summarySource.finalSoH = full_result.finalSoH;
-%     summarySource.contractSearchRuntime_s = contractSearchRuntime_s;
-%     summarySource.fullHorizonRuntime_s = fullHorizonRuntime_s;
-% 
-%     if isfield(cfg.output, 'summaryMetrics')
-% 
-%         for i = 1:numel(cfg.output.summaryMetrics)
-% 
-%             metricName = char(cfg.output.summaryMetrics(i).name);
-%             sourceName = char(cfg.output.summaryMetrics(i).source);
-% 
-%             if ~isfield(summarySource, sourceName)
-%                 error('cfg.output.summaryMetrics kért egy nem létező summary source mezőt: %s', sourceName);
-%             end
-% 
-%             if ~isfield(running.summary, metricName)
-%                 error('running.summary nem tartalmazza ezt a metrikát: %s', metricName);
-%             end
-% 
-%             running.summary.(metricName) = summarySource.(sourceName);
-%         end
-%     end
-% 
-%     % =====================================================================
-%     % 5) Output
-%     % =====================================================================
-%     simSummary = struct();
-% 
-%     simSummary.design = design;
-%     simSummary.pars = pars;
-%     simSummary.tariff = tariff;
-% 
-%     simSummary.bestContract_kW = best_contract_kW;
-%     simSummary.search_result = search_result;
-%     simSummary.full_result = full_result;
-% 
-%     simSummary.contractSearchRuntime_s = contractSearchRuntime_s;
-%     simSummary.fullHorizonRuntime_s = fullHorizonRuntime_s;
-% end
-
 function [running, simSummary, detail] = simulate_industrial_candidate_horizon( ...
     industrialCtx, design, cfg)
 % SIMULATE_INDUSTRIAL_CANDIDATE_HORIZON
 %
 % Egy candidate teljes idohorizontos szimulacioja.
-%
-% Modositott logika:
-%   - BESS parameter generalas,
-%   - explicit contract search konfiguracio osszerakasa,
-%   - reprezentans havi, topology-alapu contract search,
-%   - teljes horizon futas az optimalis contracttal,
-%   - summary metrikak kitoltese cfg.output.summaryMetrics alapjan.
+% A szimulacio fizikai dontesi logikajat nem modositja, csak a harom
+% teljesitmenyatalakito modell parametereit adja at konzekvensen:
+%   central_inv : kozponti PV inverter / kozos DC-AC inverter
+%   dcdc        : DC-csatolt BESS DC-DC konverter
+%   pcsb        : AC-csatolt BESS PCS inverter
 
     requiredCtxFields = { ...
         'day_cache', ...
@@ -304,24 +86,37 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
         end
     end
 
+    if ~isfield(cfg, 'converter') || ...
+       ~isfield(cfg.converter, 'central_inv') || ...
+       ~isfield(cfg.converter, 'dcdc') || ...
+       ~isfield(cfg.converter, 'pcsb')
+        error('Missing cfg.converter central_inv/dcdc/pcsb definitions.');
+    end
+
     pars.P_inv_limit_ac = design.P_inv_kW;
-    % =====================================================================
-    % Inverter / PCS efficiency parameters
-    % =====================================================================
-    pars.central_inv_eta_nom = cfg.dc.central_inv_eta_nom;
-    pars.central_inv_eff_load_points = cfg.dc.central_inv_eff_load_points;
-    pars.central_inv_eff_eta_points  = cfg.dc.central_inv_eff_eta_points;
 
-    pars.pcs_eta_nom = cfg.bess.pcs_eta_nom;
-    pars.pcs_eff_load_points = cfg.bess.pcs_eff_load_points;
-    pars.pcs_eff_eta_points  = cfg.bess.pcs_eff_eta_points;
+    % =====================================================================
+    % Power converter efficiency parameters
+    % =====================================================================
+    % Harom eszkoz, egyseges teljesitmenyfuggo hatasfokmodellel.
 
-    % A regi pars.inv_eta mezot meghagyjuk, hogy a tobbi fuggveny ne torjon el.
-    % Uj kódban explicit:
-    %   pars.central_inv_eta_nom
-    %   pars.pcs_eta_nom
-    % mezoket hasznaljuk.
+    pars.central_inv_eta_nom = cfg.converter.central_inv.eta_nom;
+    pars.central_inv_eff_load_points = cfg.converter.central_inv.load_points;
+    pars.central_inv_eff_eta_points  = cfg.converter.central_inv.eta_points;
+
+    pars.dcdc_eta_nom = cfg.converter.dcdc.eta_nom;
+    pars.dcdc_eff_load_points = cfg.converter.dcdc.load_points;
+    pars.dcdc_eff_eta_points  = cfg.converter.dcdc.eta_points;
+
+    pars.pcs_eta_nom = cfg.converter.pcsb.eta_nom;
+    pars.pcs_eff_load_points = cfg.converter.pcsb.load_points;
+    pars.pcs_eff_eta_points  = cfg.converter.pcsb.eta_points;
+
+    % Regi fallback mezok. Ezek csak kompatibilitas miatt maradnak.
     pars.inv_eta = pars.central_inv_eta_nom;
+    pars.eta_c = pars.dcdc_eta_nom;
+    pars.eta_d = pars.dcdc_eta_nom;
+
     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
     pars.bessCoupling = lower(string(cfg.system.bessCoupling));
     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
@@ -337,6 +132,9 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
         fprintf('pars.E_cap_nom        = %.3f\n', pars.E_cap_nom);
         fprintf('pars.P_rated          = %.3f\n', pars.P_rated);
         fprintf('pars.P_inv_limit_ac   = %.3f\n', pars.P_inv_limit_ac);
+        fprintf('central_inv eta nom   = %.4f\n', pars.central_inv_eta_nom);
+        fprintf('dcdc eta nom          = %.4f\n', pars.dcdc_eta_nom);
+        fprintf('pcsb eta nom          = %.4f\n', pars.pcs_eta_nom);
         fprintf('degradation cost      = %.3f HUF/kWh\n', pars.degradation_cost_per_kWh);
         fprintf('SoC range             = %.3f ... %.3f\n', pars.SoC_min, pars.SoC_max);
         fprintf('SoC init              = %.3f\n', pars.SoC_init);
@@ -347,26 +145,9 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     % =====================================================================
     % 2) Contract search
     % =====================================================================
-    % search_cfg = local_build_contract_search_cfg(industrialCtx.search_cfg, cfg);
-    % 
-    % tSearch = tic;
-    % 
-    % search_result = search_optimal_contract_capacity( ...
-    %     day_cache, ...
-    %     industrialCtx.rep_set_proxy, ...
-    %     industrialCtx.rep_set_valid, ...
-    %     pars, ...
-    %     tariff, ...
-    %     search_cfg);
-    % 
-    % contractSearchRuntime_s = toc(tSearch);
-    % 
-    % best_contract_kW = search_result.best_contract_kW;
-
     objectiveMode = lower(string(cfg.dispatch.objectiveMode));
 
     switch objectiveMode
-        %energy-only modeban nincs optimalis kontrakt kereses
         case "energy_only"
 
             best_contract_kW = cfg.dispatch.energyOnlyGridCap_kW;
@@ -465,11 +246,6 @@ end
 
 function search_cfg = local_build_contract_search_cfg(search_cfg_in, cfg)
 % LOCAL_BUILD_CONTRACT_SEARCH_CFG
-%
-% Contract search explicit konfiguracio.
-%
-% Itt nincs default ertekadas. Ha valamelyik cfg mezo hianyzik,
-% azonnal hibat kapunk.
 
     search_cfg = search_cfg_in;
 
