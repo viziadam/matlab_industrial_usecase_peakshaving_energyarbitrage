@@ -305,6 +305,23 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     end
 
     pars.P_inv_limit_ac = design.P_inv_kW;
+    % =====================================================================
+    % Inverter / PCS efficiency parameters
+    % =====================================================================
+    pars.central_inv_eta_nom = cfg.dc.central_inv_eta_nom;
+    pars.central_inv_eff_load_points = cfg.dc.central_inv_eff_load_points;
+    pars.central_inv_eff_eta_points  = cfg.dc.central_inv_eff_eta_points;
+
+    pars.pcs_eta_nom = cfg.bess.pcs_eta_nom;
+    pars.pcs_eff_load_points = cfg.bess.pcs_eff_load_points;
+    pars.pcs_eff_eta_points  = cfg.bess.pcs_eff_eta_points;
+
+    % A regi pars.inv_eta mezot meghagyjuk, hogy a tobbi fuggveny ne torjon el.
+    % Uj kódban explicit:
+    %   pars.central_inv_eta_nom
+    %   pars.pcs_eta_nom
+    % mezoket hasznaljuk.
+    pars.inv_eta = pars.central_inv_eta_nom;
     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
     pars.bessCoupling = lower(string(cfg.system.bessCoupling));
     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;

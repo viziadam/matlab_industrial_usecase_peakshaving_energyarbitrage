@@ -101,13 +101,23 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     Plimit = safety * Pcontract;
 
-    Ppv = min(Ppvdc * pars.inv_eta, pars.P_inv_limit_ac);
+    % Kozponti PV inverter nevleges hatasfoka.
+    % A MILP-ben konstans kozelitest hasznalunk, a topologiaban pedig
+    % teljesitmenyfuggo hatasfokgorbét.
+    etaCentralInvNom = pars.central_inv_eta_nom;
 
-    PchMax  = pars.P_chg_max / pars.inv_eta;
-    PdisMax = pars.P_dis_max * pars.inv_eta;
+    % BESS PCS nevleges hatasfoka.
+    % Nem a kozponti PV inverter hatasfokat hasznaljuk.
+    etaPcsNom = pars.pcs_eta_nom;
 
-    etaCh  = pars.inv_eta * pars.eta_cell;
-    etaDis = pars.inv_eta * pars.eta_cell;
+    Ppv = min(Ppvdc * etaCentralInvNom, pars.P_inv_limit_ac);
+
+    % A MILP AC oldali aramokkal dolgozik.
+    PchMax  = pars.P_chg_max / etaPcsNom;
+    PdisMax = pars.P_dis_max * etaPcsNom;
+
+    etaCh  = etaPcsNom * pars.eta_cell;
+    etaDis = etaPcsNom * pars.eta_cell;
 
     deg = build_article_simple_degradation_costs(pars);
     cCh  = deg.cost_ch_huf_per_kWh;
@@ -138,10 +148,16 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     % =====================================================================
     f = zeros(nVars, 1);
 
-    f(iPgL)   = buyTotal * dt_h;
-    f(iPgB)   = buyTotal * dt_h + cCh * dt_h;
-    f(iPpvB)  = cCh * dt_h;
-    f(iPbL)   = cDis * dt_h;
+    f(iPgL) = buyTotal * dt_h;
+
+    % PgB és PpvB AC oldali BESS töltési teljesítmények.
+    % A cellaoldali igénybevételt közelítően etaPcsNom-mal súlyozzuk.
+    f(iPgB)  = buyTotal * dt_h + cCh * etaPcsNom * dt_h;
+    f(iPpvB) = cCh * etaPcsNom * dt_h;
+
+    % PbL AC oldali kisütés. A pack oldali kisütési teljesítmény:
+    % PbL / etaPcsNom.
+    f(iPbL) = cDis * (1 / etaPcsNom) * dt_h;
 
     % =====================================================================
     % Egyenlosegek
@@ -309,6 +325,9 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     plan.exitflag = exitflag;
     plan.objective_value = fval;
+    plan.P_bess_plan_reference_side = "ac_bus";
+    plan.central_inv_eta_nom = etaCentralInvNom;
+    plan.pcs_eta_nom = etaPcsNom;
 
     energyMarket = sum(buy(:) .* Pgrid(:)) * dt_h;
 
@@ -317,8 +336,8 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
              tariff.transmission_energy_rate_huf_per_kWh) .* Pgrid(:)) * dt_h;
 
     degradationCost = ...
-        sum(cCh  .* Pch(:))  * dt_h + ...
-        sum(cDis .* Pdis(:)) * dt_h;
+        sum(cCh  .* etaPcsNom .* Pch(:)) * dt_h + ...
+        sum(cDis .* (Pdis(:) ./ etaPcsNom)) * dt_h;
 
     plan.economics.energy_cost_market = energyMarket;
     plan.economics.energy_cost_network = energyNetwork;

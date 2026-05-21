@@ -85,6 +85,27 @@ function cfg = create_configurations(basePath)
 
     cfg.pv.P_total_dc_kWp = ...
         sum(cfg.pvA.P_dc_kWp) + sum(cfg.pvB.P_dc_kWp);
+    
+    % 4)  =====================================================================
+    % Inverter / PCS efficiency models
+    % =====================================================================
+    % Kozponti PV inverter, peldaul 550 kW-os kozponti inverter.
+    % A hatasfok a relativ terheles fuggvenye.
+    cfg.dc.central_inv_eta_nom = 0.985;
+    cfg.dc.central_inv_eff_load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
+    cfg.dc.central_inv_eff_eta_points  = [0.00 0.90 0.955 0.975 0.983 0.987 0.985];
+
+    % BESS PCS / battery inverter.
+    % Ez kulon berendezes, ezert nem a kozponti PV inverter hatasfokat
+    % hasznaljuk.
+    cfg.bess.pcs_eta_nom = 0.965;
+    cfg.bess.pcs_eff_load_points = [0.00 0.02 0.05 0.10 0.20 0.50 1.00];
+    cfg.bess.pcs_eff_eta_points  = [0.00 0.86 0.92 0.945 0.958 0.968 0.965];
+
+    % Backward compatibility:
+    % a regi pars.inv_eta mezot meghagyjuk, de mar csak fallback /
+    % egyszeru MILP-kozelites lehet.
+    cfg.dc.inv_eta = cfg.dc.central_inv_eta_nom;
 
     % =====================================================================
     % 5) BESS candidate space
@@ -172,7 +193,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     cfg.diagnostics = struct();
 
-    cfg.diagnostics.enabled = true;
+    cfg.diagnostics.enabled = false;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
 
     cfg.diagnostics.candidateIndex = 11;
