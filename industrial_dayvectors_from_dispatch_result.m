@@ -19,6 +19,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 %   - PV -> BESS toltes
 %   - halozat -> BESS toltes
 %   - inverter / DC-DC / BESS belso veszteseg
+%   - kulon kozponti inverter es BESS PCS inverter veszteseg
 %   - leszabalyozott energia
 
     requiredDcFields = { ...
@@ -29,7 +30,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 
     for i = 1:numel(requiredDcFields)
         if ~isfield(dc, requiredDcFields{i})
-            error('Hiányzó dc mező: dc.%s', requiredDcFields{i});
+            error('Hianyzo dc mezo: dc.%s', requiredDcFields{i});
         end
     end
 
@@ -42,7 +43,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 
     for i = 1:numel(requiredDayResFields)
         if ~isfield(dayRes, requiredDayResFields{i})
-            error('Hiányzó dayRes mező: dayRes.%s', requiredDayResFields{i});
+            error('Hianyzo dayRes mezo: dayRes.%s', requiredDayResFields{i});
         end
     end
 
@@ -55,7 +56,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
 
     for i = 1:numel(requiredPlanFields)
         if ~isfield(plan_today, requiredPlanFields{i})
-            error('Hiányzó plan_today mező: plan_today.%s', requiredPlanFields{i});
+            error('Hianyzo plan_today mezo: plan_today.%s', requiredPlanFields{i});
         end
     end
 
@@ -98,6 +99,26 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     P_loss_dcdc_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_dcdc_kW', 'E_loss_dcdc', N, dt_h);
     P_loss_bess_internal_kW = local_get_energy_or_power_as_power(dayRes, 'P_loss_bess_internal_kW', 'E_loss_joule', N, dt_h);
 
+    % Topologia-specifikus inverterveszteseg bontas.
+    % DC esetben a teljes inverterveszteseg a kozos DC/AC inverterhez tartozik.
+    % AC esetben a topology_ac_coupled kulon adja a PV inverter es BESS PCS
+    % vesztesegi mezoit.
+    P_loss_central_inv_kW = local_get_optional_energy_or_power_as_power( ...
+        dayRes, ...
+        'P_loss_central_inv_kW', ...
+        'E_loss_central_inv', ...
+        N, ...
+        dt_h, ...
+        P_loss_inv_kW);
+
+    P_loss_pcsb_inv_kW = local_get_optional_energy_or_power_as_power( ...
+        dayRes, ...
+        'P_loss_pcsb_inv_kW', ...
+        'E_loss_pcsb_inv', ...
+        N, ...
+        dt_h, ...
+        zeros(N, 1));
+
     vectorsToCheck = { ...
         'P_pv_available_kW', P_pv_available_kW; ...
         'P_grid_import_no_bess_kW', P_grid_import_no_bess_kW; ...
@@ -112,6 +133,8 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         'P_pv_to_bess_kW', P_pv_to_bess_kW; ...
         'P_grid_to_bess_kW', P_grid_to_bess_kW; ...
         'P_loss_inv_kW', P_loss_inv_kW; ...
+        'P_loss_central_inv_kW', P_loss_central_inv_kW; ...
+        'P_loss_pcsb_inv_kW', P_loss_pcsb_inv_kW; ...
         'P_loss_dcdc_kW', P_loss_dcdc_kW; ...
         'P_loss_bess_internal_kW', P_loss_bess_internal_kW; ...
         'SoC', SoC; ...
@@ -128,7 +151,7 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
         vec = vectorsToCheck{i, 2};
 
         if numel(vec) ~= N
-            error('A(z) %s vektor hossza hibás. Várt: %d, kapott: %d.', ...
+            error('A(z) %s vektor hossza hibas. Vart: %d, kapott: %d.', ...
                 name, N, numel(vec));
         end
     end
@@ -154,6 +177,8 @@ function dayVectors = industrial_dayvectors_from_dispatch_result( ...
     dayVectors.P_grid_to_bess_kW = P_grid_to_bess_kW;
 
     dayVectors.P_loss_inv_kW = P_loss_inv_kW;
+    dayVectors.P_loss_central_inv_kW = P_loss_central_inv_kW;
+    dayVectors.P_loss_pcsb_inv_kW = P_loss_pcsb_inv_kW;
     dayVectors.P_loss_dcdc_kW = P_loss_dcdc_kW;
     dayVectors.P_loss_bess_internal_kW = P_loss_bess_internal_kW;
 
@@ -181,12 +206,12 @@ function PpvAvailable = local_get_pv_available_ac(dayRes, P_pv_dc_kW, N)
     elseif isfield(dayRes, 'P_pv_ac_kW') && ~isfield(dayRes, 'P_inv_ac_kW')
         PpvAvailable = dayRes.P_pv_ac_kW(:);
     elseif isfield(dayRes, 'P_pv_ac_kW') && isfield(dayRes, 'P_bess_dc_actual_kW')
-        error(['DC topology esetén a dayRes.P_pv_ac_kW közös inverter kimenet is lehet. ', ...
-               'Hiányzik dayRes.P_pv_ac_base_kW.']);
+        error(['DC topology eseten a dayRes.P_pv_ac_kW kozos inverter kimenet is lehet. ', ...
+               'Hianyzik dayRes.P_pv_ac_base_kW.']);
     elseif isfield(dayRes, 'P_pv_ac_kW')
         PpvAvailable = dayRes.P_pv_ac_kW(:);
     else
-        error('Hiányzó dayRes mező: P_pv_ac_kW vagy P_pv_ac_base_kW.');
+        error('Hianyzo dayRes mezo: P_pv_ac_kW vagy P_pv_ac_base_kW.');
     end
 
     PpvAvailable = local_vec(PpvAvailable, N);
@@ -200,7 +225,21 @@ function P = local_get_energy_or_power_as_power(dayRes, powerField, energyField,
     elseif isfield(dayRes, energyField)
         P = dayRes.(energyField)(:) ./ dt_h;
     else
-        error('Hiányzó dayRes veszteségmező: %s vagy %s.', powerField, energyField);
+        error('Hianyzo dayRes vesztesegmezo: %s vagy %s.', powerField, energyField);
+    end
+
+    P = local_vec(P, N);
+end
+
+
+function P = local_get_optional_energy_or_power_as_power(dayRes, powerField, energyField, N, dt_h, defaultValue)
+
+    if isfield(dayRes, powerField)
+        P = dayRes.(powerField)(:);
+    elseif isfield(dayRes, energyField)
+        P = dayRes.(energyField)(:) ./ dt_h;
+    else
+        P = defaultValue(:);
     end
 
     P = local_vec(P, N);
@@ -212,6 +251,6 @@ function v = local_vec(x, N)
     v = x(:);
 
     if numel(v) ~= N
-        error('Vektorhossz eltérés. Várt: %d, kapott: %d.', N, numel(v));
+        error('Vektorhossz elteres. Vart: %d, kapott: %d.', N, numel(v));
     end
 end
