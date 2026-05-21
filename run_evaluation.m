@@ -15,6 +15,11 @@ function evalResult = run_evaluation(mode)
 %   Ez a fuggveny nem futtatja ujra a teljes candidate szimulaciot.
 %   Csak a results/<mode>/results_dc_<mode>.mat es
 %   results/<mode>/results_ac_<mode>.mat fajlokbol dolgozik.
+%
+% Megjegyzes:
+%   A hybrid AC+DC BESS eredmenyeket kesobb kulon hybrid kiertekelo fajl
+%   dolgozza fel. Ez a fuggveny tovabbra is a legacy AC/DC dolgozati
+%   kiertekelesek kozponti inditoja.
 
     if nargin < 1 || strlength(string(mode)) == 0
         mode = "combined";
@@ -51,6 +56,10 @@ function result = local_run_single_mode(basePath, mode)
     cfg = create_configurations(basePath);
     cfg.dispatch.objectiveMode = mode;
 
+    if mode == "energy_only" || mode == "combined"
+        cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
+    end
+
     result = struct();
     result.mode = mode;
 
@@ -62,6 +71,26 @@ function result = local_run_single_mode(basePath, mode)
     % Altalanos AC/DC osszehasonlito kiertekeles
     % ------------------------------------------------------------------
     result.compareResult = compare_ac_dc_results_for_mode(cfg, mode);
+
+    % ------------------------------------------------------------------
+    % Extra energiaaramlasi / veszteseg / idealis megtakaritasi abrak
+    % ------------------------------------------------------------------
+    % Ezeket korabban a teljes szimulacio vegerol hivtuk. Itt is meghivjuk,
+    % hogy run_evaluation(mode) onmagaban eleg legyen a legfrissebb
+    % dolgozati abrak ujrageneralasahoz.
+    if mode == "energy_only" || mode == "combined"
+        result.compareResult.figures.arbitrageEnergyFlowFigures = ...
+            plot_arbitrage_energy_flow_figures( ...
+                result.compareResult.tableAll, ...
+                cfg, ...
+                result.compareResult.outputFolder);
+
+        compareResult = result.compareResult; %#ok<NASGU>
+
+        save(fullfile(result.compareResult.outputFolder, 'comparison_result.mat'), ...
+            'compareResult', ...
+            '-v7.3');
+    end
 
     % ------------------------------------------------------------------
     % Modspecifikus dolgozati kiertekelesek
