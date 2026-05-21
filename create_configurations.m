@@ -15,6 +15,8 @@ function cfg = create_configurations(basePath)
     cfg.system.bessCoupling = "dc";
     cfg.system.useCase = "industrial_peak_shaving_arbitrage";
 
+    cfg.profiling.enabled = true;
+
     cfg.dispatch.objectiveMode = "energy_only";
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
@@ -42,7 +44,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 3) Simulation horizon
     % =====================================================================
-    cfg.analysis.simYears = 4;
+    cfg.analysis.simYears = 6;
     cfg.loadScale = 1.0;
 
     % =====================================================================
