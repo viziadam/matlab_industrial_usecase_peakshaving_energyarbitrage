@@ -1,14 +1,7 @@
 function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 % SIMULATE_CANDIDATES_DATABASE
 %
-% Lefuttatja az összes ipari PV+BESS candidate-et.
-%
-% Fontos:
-%   - A candidate loop megmarad.
-%   - A metrikák cfg.output alapján kerülnek mentésre.
-%   - A DC/AC topológia cfg.system.bessCoupling alapján választódik ki.
-%   - DC esetben kész a peak shaving + arbitrázs + contract optimalizálás.
-%   - AC esetben ugyanaz az interfész megvan, de a planner/topology placeholder.
+% Lefuttatja az osszes ipari PV+BESS candidate-et.
 
     if nargin < 4 || isempty(industrialCtx)
         industrialCtx = prepare_industrial_simulation_context(data, cfg);
@@ -16,9 +9,15 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 
     nCandidates = DB.nCandidates;
 
+    profilingEnabled = local_is_runtime_profiling_enabled(cfg);
+
+    if profilingEnabled
+        DB = local_init_runtime_profile_columns(DB);
+    end
+
     % =====================================================================
-% Diagnostic mode
-% =====================================================================
+    % Diagnostic mode
+    % =====================================================================
     diagnosticMode = false;
 
     if isfield(cfg, 'diagnostics')
@@ -32,31 +31,31 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
     if diagnosticMode
 
         if ~isfield(cfg.diagnostics, 'candidateIndex') || ...
-        isempty(cfg.diagnostics.candidateIndex)
+           isempty(cfg.diagnostics.candidateIndex)
 
-            error('cfg.diagnostics.enabled = true, de cfg.diagnostics.candidateIndex nincs megadva.');
+            error('cfg.diagnostics.enabled = true, but cfg.diagnostics.candidateIndex is missing.');
         end
 
         requestedCandidateList = cfg.diagnostics.candidateIndex(:).';
 
         if any(requestedCandidateList < 1) || any(requestedCandidateList > nCandidates)
-            error('Érvénytelen diagnostics candidateIndex.');
+            error('Invalid diagnostics candidateIndex.');
         end
 
         T = DB.candidateTable;
 
         if ~ismember('BESS_PV_ratio', T.Properties.VariableNames)
-            error('A candidateTable nem tartalmaz BESS_PV_ratio oszlopot.');
+            error('candidateTable does not contain BESS_PV_ratio.');
         end
 
         baselineIdx = find(abs(T.BESS_PV_ratio) < 1e-12);
 
         if isempty(baselineIdx)
-            error('Diagnosztikai/evaluation futáshoz kell baseline candidate: BESS_PV_ratio = 0.');
+            error('Diagnostic/evaluation run requires baseline candidate: BESS_PV_ratio = 0.');
         end
 
         if numel(baselineIdx) > 1
-            error('Több baseline candidate található. Ez nem egyértelmű.');
+            error('Multiple baseline candidates found.');
         end
 
         candidateList = unique([baselineIdx, requestedCandidateList], 'stable');
@@ -86,12 +85,15 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
         fprintf('====================================================\n');
 
         tCandidate = tic;
+        runtimeProfile = local_empty_runtime_profile();
 
         try
             % -------------------------------------------------------------
             % Candidate design
             % -------------------------------------------------------------
+            tStage = tic;
             design = table_row_to_design(DB.candidateTable(c, :));
+            runtimeProfile.design_s = toc(tStage);
 
             % -------------------------------------------------------------
             % Horizon-level candidate simulation
@@ -102,10 +104,21 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 cfgRun.diagnostics.storeCandidateDetail = true;
                 cfgRun.diagnostics.storePlannerDebug = true;
             end
+
+            tStage = tic;
             [running, simSummary, detail] = simulate_industrial_candidate_horizon( ...
                 industrialCtx, ...
                 design, ...
                 cfgRun);
+            runtimeProfile.simulation_s = toc(tStage);
+
+            runtimeProfile.contractSearch_s = local_get_numeric_field(simSummary, 'contractSearchRuntime_s', 0);
+            runtimeProfile.fullHorizon_s = local_get_numeric_field(simSummary, 'fullHorizonRuntime_s', 0);
+            runtimeProfile.simulationOverhead_s = max( ...
+                runtimeProfile.simulation_s - ...
+                runtimeProfile.contractSearch_s - ...
+                runtimeProfile.fullHorizon_s, ...
+                0);
 
             runtime_s = toc(tCandidate);
 
@@ -125,16 +138,20 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             % -------------------------------------------------------------
             % Candidate result finalization
             % -------------------------------------------------------------
+            tStage = tic;
             DB = finalize_candidate_result( ...
                 DB, ...
                 c, ...
                 running, ...
                 runtime_s, ...
                 cfgRun);
+            runtimeProfile.finalize_s = toc(tStage);
 
             % -------------------------------------------------------------
             % Detailed diagnostics
             % -------------------------------------------------------------
+            tStageDiagnostics = tic;
+
             if diagnosticMode
 
                 if ~isfield(DB, 'diagnostics') || isempty(DB.diagnostics)
@@ -148,11 +165,8 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 DB.diagnostics.(fieldName).summary = simSummary;
                 DB.diagnostics.(fieldName).detail = detail;
 
-                % -------------------------------------------------------------
-                % Dispatch / planner diagnostic plots
-                % -------------------------------------------------------------
                 if isfield(cfgRun.diagnostics, 'makeDispatchDiagnosticPlots') && ...
-                    cfgRun.diagnostics.makeDispatchDiagnosticPlots
+                   cfgRun.diagnostics.makeDispatchDiagnosticPlots
 
                     local_plot_embedded_dispatch_diagnostics( ...
                         cfgRun, ...
@@ -163,14 +177,22 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 end
             end
 
+            runtimeProfile.diagnostics_s = toc(tStageDiagnostics);
+
         catch ME
 
             runtime_s = toc(tCandidate);
+            runtimeProfile.total_s = runtime_s;
 
             DB.candidateTable.wasSimulated(c) = false;
             DB.candidateTable.hasError(c) = true;
             DB.candidateTable.errorMessage(c) = string(ME.message);
             DB.candidateTable.runtime_s(c) = runtime_s;
+
+            if profilingEnabled
+                DB = local_store_runtime_profile(DB, c, runtimeProfile);
+                local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, true);
+            end
 
             if isfield(cfg, 'sim') && ...
                isfield(cfg.sim, 'saveAfterEachCandidate') && ...
@@ -185,104 +207,111 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             rethrow(ME);
         end
 
-        
-
         % -----------------------------------------------------------------
         % Partial save
         % -----------------------------------------------------------------
+        tStage = tic;
+
         if isfield(cfg, 'sim') && ...
            isfield(cfg.sim, 'saveAfterEachCandidate') && ...
            cfg.sim.saveAfterEachCandidate
 
             save_candidates_database(DB, cfg);
         end
+
+        runtimeProfile.save_s = toc(tStage);
+        runtimeProfile.total_s = toc(tCandidate);
+        runtimeProfile.other_s = max( ...
+            runtimeProfile.total_s - ...
+            runtimeProfile.design_s - ...
+            runtimeProfile.simulation_s - ...
+            runtimeProfile.finalize_s - ...
+            runtimeProfile.diagnostics_s - ...
+            runtimeProfile.save_s, ...
+            0);
+
+        DB.candidateTable.runtime_s(c) = runtimeProfile.total_s;
+
+        if profilingEnabled
+            DB = local_store_runtime_profile(DB, c, runtimeProfile);
+            local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, false);
+        end
     end
 
     if diagnosticMode && isfield(cfg.diagnostics, 'runEvaluation') && cfg.diagnostics.runEvaluation
 
-            evalCfgDiag = create_evaluation_config(cfg);
+        evalCfgDiag = create_evaluation_config(cfg);
 
-            evalCfgDiag.output.baseFolder = fullfile( ...
+        evalCfgDiag.output.baseFolder = fullfile( ...
+            cfg.diagnostics.outputFolder, ...
+            'evaluation');
+
+        if ~exist(evalCfgDiag.output.baseFolder, 'dir')
+            mkdir(evalCfgDiag.output.baseFolder);
+        end
+
+        evalCfgDiag.output.saveEvaluationMat = true;
+        evalCfgDiag.output.saveEvaluationCsv = true;
+        evalCfgDiag.output.saveReportTables = true;
+
+        evalCfgDiag.plots.makePlots = true;
+        evalCfgDiag.plots.makeCandidateSweepPlots = false;
+        evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
+
+        evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
+
+        save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
+            'evaluationResult', ...
+            '-v7.3');
+
+        fprintf('\nDiagnostic evaluation saved:\n%s\n', ...
+            fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
+
+        diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
+
+        for ii = 1:numel(diagnosticCandidateList)
+
+            selectedCandidateIndex = diagnosticCandidateList(ii);
+
+            if selectedCandidateIndex == baselineIdx
+                continue;
+            end
+
+            yearlyResult = evaluate_selected_candidate_yearly_budget( ...
+                DB, ...
+                cfg, ...
+                evalCfgDiag, ...
+                selectedCandidateIndex);
+
+            yearlyOutDir = fullfile( ...
                 cfg.diagnostics.outputFolder, ...
-                'evaluation');
+                sprintf('candidate_%06d', selectedCandidateIndex), ...
+                'yearly_budget');
 
-            if ~exist(evalCfgDiag.output.baseFolder, 'dir')
-                mkdir(evalCfgDiag.output.baseFolder);
+            if ~exist(yearlyOutDir, 'dir')
+                mkdir(yearlyOutDir);
             end
 
-            evalCfgDiag.output.saveEvaluationMat = true;
-            evalCfgDiag.output.saveEvaluationCsv = true;
-            evalCfgDiag.output.saveReportTables = true;
+            yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
+            writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
 
-            evalCfgDiag.plots.makePlots = true;
-
-            % Diagnosztikai módban nem kérünk teljes sweep-görbéket,
-            % mert csak baseline + selected candidate van.
-            evalCfgDiag.plots.makeCandidateSweepPlots = false;
-
-            % Helyette részletes éves költségvetést rajzolunk a kiválasztott candidate-re.
-            evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
-
-            evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
-
-            save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
-                'evaluationResult', ...
+            save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), ...
+                'yearlyResult', ...
                 '-v7.3');
-
-            fprintf('\nDiagnostic evaluation saved:\n%s\n', ...
-                fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
-
-            % -----------------------------------------------------------------
-            % Részletes éves költségvetés a kiválasztott diagnosztikai candidate-re
-            % -----------------------------------------------------------------
-            diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
-
-            for ii = 1:numel(diagnosticCandidateList)
-
-                selectedCandidateIndex = diagnosticCandidateList(ii);
-
-                if selectedCandidateIndex == baselineIdx
-                    continue;
-                end
-
-                yearlyResult = evaluate_selected_candidate_yearly_budget( ...
-                    DB, ...
-                    cfg, ...
-                    evalCfgDiag, ...
-                    selectedCandidateIndex);
-
-                yearlyOutDir = fullfile( ...
-                    cfg.diagnostics.outputFolder, ...
-                    sprintf('candidate_%06d', selectedCandidateIndex), ...
-                    'yearly_budget');
-
-                if ~exist(yearlyOutDir, 'dir')
-                    mkdir(yearlyOutDir);
-                end
-
-                yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
-                writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
-
-                save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), ...
-                    'yearlyResult', ...
-                    '-v7.3');
-            end
-     
+        end
     end
-    % =====================================================================
-    % Normal full-sweep evaluation
-    % =====================================================================
+
     if ~diagnosticMode && ...
-        isfield(cfg, 'evaluation') && ...
-        isfield(cfg.evaluation, 'runAfterSimulation') && ...
-        cfg.evaluation.runAfterSimulation
+       isfield(cfg, 'evaluation') && ...
+       isfield(cfg.evaluation, 'runAfterSimulation') && ...
+       cfg.evaluation.runAfterSimulation
 
         evalCfg = create_evaluation_config(cfg);
 
         evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
 
         if isfield(cfg.evaluation, 'saveEvaluationResult') && ...
-            cfg.evaluation.saveEvaluationResult
+           cfg.evaluation.saveEvaluationResult
 
             save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), ...
                 'evaluationResult', ...
@@ -331,7 +360,125 @@ function design = table_row_to_design(row)
         f = requiredFields{k};
 
         if ~isfield(design, f)
-            error('A design struktúra hiányzó mezője: %s', f);
+            error('Design structure missing field: %s', f);
         end
+    end
+end
+
+
+% =========================================================================
+% RUNTIME PROFILING HELPERS
+% =========================================================================
+function enabled = local_is_runtime_profiling_enabled(cfg)
+
+    enabled = false;
+
+    if isfield(cfg, 'profiling') && ...
+       isfield(cfg.profiling, 'enabled')
+        enabled = logical(cfg.profiling.enabled);
+    end
+end
+
+
+function profile = local_empty_runtime_profile()
+
+    profile = struct();
+    profile.design_s = 0;
+    profile.simulation_s = 0;
+    profile.contractSearch_s = 0;
+    profile.fullHorizon_s = 0;
+    profile.simulationOverhead_s = 0;
+    profile.finalize_s = 0;
+    profile.diagnostics_s = 0;
+    profile.save_s = 0;
+    profile.other_s = 0;
+    profile.total_s = 0;
+end
+
+
+function DB = local_init_runtime_profile_columns(DB)
+
+    names = { ...
+        'runtimeDesign_s', ...
+        'runtimeSimulation_s', ...
+        'runtimeContractSearch_s', ...
+        'runtimeFullHorizon_s', ...
+        'runtimeSimulationOverhead_s', ...
+        'runtimeFinalize_s', ...
+        'runtimeDiagnostics_s', ...
+        'runtimeSave_s', ...
+        'runtimeOther_s', ...
+        'runtimeProfileTotal_s', ...
+        'runtimeFullHorizon_pct', ...
+        'runtimeContractSearch_pct', ...
+        'runtimeSave_pct'};
+
+    for i = 1:numel(names)
+        name = names{i};
+        if ~ismember(name, DB.candidateTable.Properties.VariableNames)
+            DB.candidateTable.(name) = NaN(height(DB.candidateTable), 1);
+        end
+    end
+end
+
+
+function DB = local_store_runtime_profile(DB, c, profile)
+
+    if ~ismember('runtimeDesign_s', DB.candidateTable.Properties.VariableNames)
+        DB = local_init_runtime_profile_columns(DB);
+    end
+
+    total_s = max(profile.total_s, eps);
+
+    DB.candidateTable.runtimeDesign_s(c) = profile.design_s;
+    DB.candidateTable.runtimeSimulation_s(c) = profile.simulation_s;
+    DB.candidateTable.runtimeContractSearch_s(c) = profile.contractSearch_s;
+    DB.candidateTable.runtimeFullHorizon_s(c) = profile.fullHorizon_s;
+    DB.candidateTable.runtimeSimulationOverhead_s(c) = profile.simulationOverhead_s;
+    DB.candidateTable.runtimeFinalize_s(c) = profile.finalize_s;
+    DB.candidateTable.runtimeDiagnostics_s(c) = profile.diagnostics_s;
+    DB.candidateTable.runtimeSave_s(c) = profile.save_s;
+    DB.candidateTable.runtimeOther_s(c) = profile.other_s;
+    DB.candidateTable.runtimeProfileTotal_s(c) = profile.total_s;
+
+    DB.candidateTable.runtimeFullHorizon_pct(c) = 100 * profile.fullHorizon_s / total_s;
+    DB.candidateTable.runtimeContractSearch_pct(c) = 100 * profile.contractSearch_s / total_s;
+    DB.candidateTable.runtimeSave_pct(c) = 100 * profile.save_s / total_s;
+end
+
+
+function local_print_candidate_runtime_profile(c, candidateID, profile, failed)
+
+    total_s = max(profile.total_s, eps);
+
+    if failed
+        statusText = 'FAILED';
+    else
+        statusText = 'OK';
+    end
+
+    fprintf('\n--- Runtime profile | candidate %d | %s | %s ---\n', ...
+        c, string(candidateID), statusText);
+
+    fprintf('Total candidate runtime       : %10.3f s | %6.2f %%\n', profile.total_s, 100.0);
+    fprintf('  Design conversion           : %10.3f s | %6.2f %%\n', profile.design_s, 100 * profile.design_s / total_s);
+    fprintf('  Candidate simulation        : %10.3f s | %6.2f %%\n', profile.simulation_s, 100 * profile.simulation_s / total_s);
+    fprintf('    Contract search           : %10.3f s | %6.2f %%\n', profile.contractSearch_s, 100 * profile.contractSearch_s / total_s);
+    fprintf('    Full horizon simulation   : %10.3f s | %6.2f %%\n', profile.fullHorizon_s, 100 * profile.fullHorizon_s / total_s);
+    fprintf('    Simulation overhead       : %10.3f s | %6.2f %%\n', profile.simulationOverhead_s, 100 * profile.simulationOverhead_s / total_s);
+    fprintf('  Finalize result             : %10.3f s | %6.2f %%\n', profile.finalize_s, 100 * profile.finalize_s / total_s);
+    fprintf('  Diagnostics                 : %10.3f s | %6.2f %%\n', profile.diagnostics_s, 100 * profile.diagnostics_s / total_s);
+    fprintf('  Save database               : %10.3f s | %6.2f %%\n', profile.save_s, 100 * profile.save_s / total_s);
+    fprintf('  Other loop overhead         : %10.3f s | %6.2f %%\n', profile.other_s, 100 * profile.other_s / total_s);
+    fprintf('------------------------------------------------------\n');
+end
+
+
+function value = local_get_numeric_field(S, fieldName, defaultValue)
+
+    if isfield(S, fieldName) && isnumeric(S.(fieldName)) && isscalar(S.(fieldName))
+        value = S.(fieldName);
+    else
+        value = defaultValue;
     end
 end
