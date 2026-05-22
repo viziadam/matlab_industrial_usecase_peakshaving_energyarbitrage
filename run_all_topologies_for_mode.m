@@ -141,6 +141,10 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
 
         save_candidates_database(DB, cfg);
 
+        % Egységes, újrahasznosítható candidate-szintű kiértékelési cache.
+        % Diagnosztikai és teljes futás esetén is ugyanabba a struktúrába ment.
+        candidateMetrics = save_canonical_candidate_metrics(DB, cfg); %#ok<NASGU>
+
         if ~diagnosticMode && coupling ~= "hybrid"
             evalCfg = create_evaluation_config(cfg);
             evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>

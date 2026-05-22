@@ -41,23 +41,34 @@ function out = run_ac_dc_diagnostic_plots_from_saved_results(objectiveMode, cand
         error('Missing saved AC result file: %s', acPath);
     end
 
-    Sdc = load(dcPath, 'configurationDatabase');
-    Sac = load(acPath, 'configurationDatabase');
+    dcMetrics = load_canonical_candidate_metrics( ...
+        cfgBase, ...
+        objectiveMode, ...
+        "dc", ...
+        candidateList);
 
-    if ~isfield(Sdc, 'configurationDatabase')
-        error('Saved DC result does not contain variable configurationDatabase: %s', dcPath);
-    end
+    acMetrics = load_canonical_candidate_metrics( ...
+        cfgBase, ...
+        objectiveMode, ...
+        "ac", ...
+        candidateList);
 
-    if ~isfield(Sac, 'configurationDatabase')
-        error('Saved AC result does not contain variable configurationDatabase: %s', acPath);
-    end
+    % if ~isfield(Sdc, 'configurationDatabase')
+    %     error('Saved DC result does not contain variable configurationDatabase: %s', dcPath);
+    % end
+    % 
+    % if ~isfield(Sac, 'configurationDatabase')
+    %     error('Saved AC result does not contain variable configurationDatabase: %s', acPath);
+    % end
 
     runResult = struct();
     runResult.objectiveMode = objectiveMode;
+
     runResult.dc = struct();
     runResult.ac = struct();
-    runResult.dc.DB = Sdc.configurationDatabase;
-    runResult.ac.DB = Sac.configurationDatabase;
+
+    runResult.dc.candidateMetrics = dcMetrics;
+    runResult.ac.candidateMetrics = acMetrics;
 
     if isempty(candidateList)
         nDc = height(runResult.dc.DB.candidateTable);

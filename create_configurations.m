@@ -109,7 +109,8 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 6) BESS candidate space
     % =====================================================================
-    cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
+    % cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
+    cfg.candidates.BESS_PV_ratio_vec = [1 2 3];
     cfg.candidates.bessDuration_h = 2;
 
     cfg.candidates.designFields = { ...
@@ -178,9 +179,9 @@ function cfg = create_configurations(basePath)
     % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-    cfg.diagnostics.enabled = true;
+    cfg.diagnostics.enabled = false;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
-    cfg.diagnostics.candidateIndex = 9;
+    cfg.diagnostics.candidateIndex = 5;
 
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;
