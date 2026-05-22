@@ -120,7 +120,7 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     P_grid_import_base_kW = max(P_grid_base_kW, 0);
     P_grid_export_base_kW = max(-P_grid_base_kW, 0);
 
-    % =====================================================================
+     % =====================================================================
     % Explicit topology-level canonical energy-flow attribution
     % =====================================================================
     P_dcdc_loss_kW = P_loss_dcdc_W ./ 1000;
@@ -128,60 +128,66 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     P_bess_charge_dc_bus_kW = max(-P_bess_dc_actual_kW, 0);
     P_bess_discharge_dc_bus_kW = max(P_bess_dc_actual_kW, 0);
 
-    P_bess_charge_pack_kW = max(-P_pack_actual_kW, 0);
-    P_bess_discharge_pack_kW = max(P_pack_actual_kW, 0);
+    P_bess_charge_pack_terminal_kW = max(-P_pack_actual_kW, 0);
+    P_bess_discharge_pack_terminal_kW = max(P_pack_actual_kW, 0);
 
-    % Charge direction.
-    % PV -> BESS: PV DC -> DC/DC -> pack.
-    % Grid -> BESS: grid AC -> central inverter -> DC bus -> DC/DC -> pack.
-    P_pv_to_bess_kW = zeros(1, N);
-    P_grid_to_bess_after_central_kW = zeros(1, N);
-    P_grid_to_bess_kW = zeros(1, N);
+    P_bess_charge_pack_kW = P_bess_charge_pack_terminal_kW;
+    P_bess_discharge_pack_kW = P_bess_discharge_pack_terminal_kW;
 
-    chargeMask = P_bess_charge_dc_bus_kW > 1e-9;
+    P_bess_internal_loss_kW = ...
+        (pack_out.E_loss_joule + pack_out.E_loss_sat + pack_out.E_loss_empty) ./ ...
+        1000 ./ dt_h;
 
-    P_pv_to_bess_kW(chargeMask) = min( ...
-        P_pv_dc_kW(chargeMask), ...
-        P_bess_charge_dc_bus_kW(chargeMask));
+    P_bess_internal_charge_loss_kW = zeros(1, N);
+    P_bess_internal_discharge_loss_kW = zeros(1, N);
 
-    P_grid_to_bess_after_central_kW(chargeMask) = max( ...
-        P_bess_charge_dc_bus_kW(chargeMask) - P_pv_to_bess_kW(chargeMask), ...
+    chargePackMask = P_pack_actual_kW < -1e-9;
+    dischargePackMask = P_pack_actual_kW > 1e-9;
+
+    P_bess_internal_charge_loss_kW(chargePackMask) = ...
+        P_bess_internal_loss_kW(chargePackMask);
+
+    P_bess_internal_discharge_loss_kW(dischargePackMask) = ...
+        P_bess_internal_loss_kW(dischargePackMask);
+
+    P_bess_charge_stored_after_internal_kW = max( ...
+        P_bess_charge_pack_terminal_kW - P_bess_internal_charge_loss_kW, ...
         0);
 
-    gridChargeMask = P_grid_to_bess_after_central_kW > 1e-9;
+    % ---------------------------------------------------------------------
+    % Central inverter AC output allocation
+    % ---------------------------------------------------------------------
+    P_inv_ac_positive_kW = max(P_inv_ac_kW, 0);
+    P_inv_ac_rectifier_kW = max(-P_inv_ac_kW, 0);
 
-    P_grid_to_bess_kW(gridChargeMask) = max( ...
-        -P_inv_ac_kW(gridChargeMask), ...
-        P_grid_to_bess_after_central_kW(gridChargeMask));
+    P_central_loss_to_ac_kW = zeros(1, N);
+    positiveInvMask = P_bus_dc_actual_kW > 1e-9;
 
-    P_central_loss_grid_to_bess_kW = max( ...
-        P_grid_to_bess_kW - P_grid_to_bess_after_central_kW, ...
+    P_central_loss_to_ac_kW(positiveInvMask) = ...
+        P_loss_inv_kW(positiveInvMask);
+
+    P_dc_used_by_ac_kW = ...
+        P_inv_ac_positive_kW + P_central_loss_to_ac_kW;
+
+    P_dc_used_by_ac_kW = min( ...
+        P_dc_used_by_ac_kW, ...
+        max(P_bus_dc_actual_kW, 0));
+
+    P_pv_to_inverter_dc_kW = min(P_pv_dc_kW, P_dc_used_by_ac_kW);
+
+    P_remaining_dc_used_by_ac_kW = max( ...
+        P_dc_used_by_ac_kW - P_pv_to_inverter_dc_kW, ...
         0);
 
-    chargeDen = max(P_bess_charge_dc_bus_kW, eps);
-    pvChargeShare = P_pv_to_bess_kW ./ chargeDen;
-    gridChargeShare = P_grid_to_bess_after_central_kW ./ chargeDen;
-    pvChargeShare(~chargeMask) = 0;
-    gridChargeShare(~chargeMask) = 0;
+    P_bess_to_inverter_dc_kW = min( ...
+        P_bess_discharge_dc_bus_kW, ...
+        P_remaining_dc_used_by_ac_kW);
 
-    P_dcdc_charge_loss_kW = zeros(1, N);
-    P_dcdc_charge_loss_kW(chargeMask) = P_dcdc_loss_kW(chargeMask);
-
-    P_pv_to_bess_loss_kW = pvChargeShare .* P_dcdc_charge_loss_kW;
-    P_grid_to_bess_loss_kW = ...
-        P_central_loss_grid_to_bess_kW + ...
-        gridChargeShare .* P_dcdc_charge_loss_kW;
-
-    P_pv_to_bess_stored_kW = pvChargeShare .* P_bess_charge_pack_kW;
-    P_grid_to_bess_stored_kW = gridChargeShare .* P_bess_charge_pack_kW;
-
-    % Discharge direction.
-    % BESS -> load: pack -> DC/DC -> central inverter -> AC bus -> load.
-    P_pv_to_inverter_dc_kW = max(P_pv_dc_kW - P_pv_to_bess_kW, 0);
-    P_bess_to_inverter_dc_kW = P_bess_discharge_dc_bus_kW;
-    P_total_to_inverter_dc_kW = P_pv_to_inverter_dc_kW + P_bess_to_inverter_dc_kW;
+    P_total_to_inverter_dc_kW = ...
+        P_pv_to_inverter_dc_kW + P_bess_to_inverter_dc_kW;
 
     invSourceDen = max(P_total_to_inverter_dc_kW, eps);
+
     pvInvShare = P_pv_to_inverter_dc_kW ./ invSourceDen;
     bessInvShare = P_bess_to_inverter_dc_kW ./ invSourceDen;
 
@@ -189,36 +195,123 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     pvInvShare(noInvSourceMask) = 0;
     bessInvShare(noInvSourceMask) = 0;
 
-    P_inv_ac_positive_kW = max(P_inv_ac_kW, 0);
     P_pv_ac_direct_kW = P_inv_ac_positive_kW .* pvInvShare;
     P_bess_ac_after_conversion_kW = P_inv_ac_positive_kW .* bessInvShare;
 
     P_pv_to_load_direct_kW = min(P_pv_ac_direct_kW, P_load_kW);
-    remainingLoadAfterPv_kW = max(P_load_kW - P_pv_to_load_direct_kW, 0);
 
-    P_bess_to_load_kW = min(P_bess_ac_after_conversion_kW, remainingLoadAfterPv_kW);
-    remainingLoadAfterBess_kW = max(P_load_kW - P_pv_to_load_direct_kW - P_bess_to_load_kW, 0);
+    remainingLoadAfterPv_kW = max( ...
+        P_load_kW - P_pv_to_load_direct_kW, ...
+        0);
+
+    P_bess_to_load_kW = min( ...
+        P_bess_ac_after_conversion_kW, ...
+        remainingLoadAfterPv_kW);
+
+    remainingLoadAfterBess_kW = max( ...
+        P_load_kW - P_pv_to_load_direct_kW - P_bess_to_load_kW, ...
+        0);
 
     P_grid_to_load_kW = remainingLoadAfterBess_kW;
-    P_grid_import_total_kW = P_grid_import_kW;
 
-    P_bess_discharge_before_conversion_kW = P_bess_discharge_pack_kW;
+    % ---------------------------------------------------------------------
+    % Charge direction
+    %
+    % PV -> BESS:
+    %   PV DC -> DC/DC -> pack terminal -> internal cell loss -> stored
+    %
+    % Grid -> BESS:
+    %   grid AC -> central inverter rectifier -> DC bus -> DC/DC ->
+    %   pack terminal -> internal cell loss -> stored
+    % ---------------------------------------------------------------------
+    P_pv_remaining_after_inverter_kW = max( ...
+        P_pv_dc_kW - P_pv_to_inverter_dc_kW, ...
+        0);
+
+    P_pv_to_bess_kW = min( ...
+        P_pv_remaining_after_inverter_kW, ...
+        P_bess_charge_dc_bus_kW);
+
+    P_grid_to_bess_after_central_kW = max( ...
+        P_bess_charge_dc_bus_kW - P_pv_to_bess_kW, ...
+        0);
+
+    P_grid_to_bess_kW = zeros(1, N);
+
+    rectifierMask = P_grid_to_bess_after_central_kW > 1e-9;
+
+    P_grid_to_bess_kW(rectifierMask) = ...
+        P_grid_to_bess_after_central_kW(rectifierMask) + ...
+        P_loss_inv_kW(rectifierMask);
+
+    P_grid_to_bess_kW = max(P_grid_to_bess_kW, P_inv_ac_rectifier_kW);
+
+    P_central_loss_grid_to_bess_kW = max( ...
+        P_grid_to_bess_kW - P_grid_to_bess_after_central_kW, ...
+        0);
+
+    chargeDen = max(P_bess_charge_dc_bus_kW, eps);
+
+    pvChargeShare = P_pv_to_bess_kW ./ chargeDen;
+    gridChargeShare = P_grid_to_bess_after_central_kW ./ chargeDen;
+
+    noChargeMask = P_bess_charge_dc_bus_kW <= 1e-9;
+    pvChargeShare(noChargeMask) = 0;
+    gridChargeShare(noChargeMask) = 0;
+
+    P_dcdc_charge_loss_kW = zeros(1, N);
+    P_dcdc_charge_loss_kW(noChargeMask == false) = ...
+        P_dcdc_loss_kW(noChargeMask == false);
+
+    P_pv_to_bess_loss_kW = ...
+        pvChargeShare .* ...
+        (P_dcdc_charge_loss_kW + P_bess_internal_charge_loss_kW);
+
+    P_grid_to_bess_loss_kW = ...
+        P_central_loss_grid_to_bess_kW + ...
+        gridChargeShare .* ...
+        (P_dcdc_charge_loss_kW + P_bess_internal_charge_loss_kW);
+
+    P_pv_to_bess_stored_kW = ...
+        pvChargeShare .* P_bess_charge_stored_after_internal_kW;
+
+    P_grid_to_bess_stored_kW = ...
+        gridChargeShare .* P_bess_charge_stored_after_internal_kW;
+
+    % ---------------------------------------------------------------------
+    % Discharge direction
+    %
+    % BESS -> load:
+    %   stored/pack -> internal cell loss -> DC/DC -> central inverter ->
+    %   AC load
+    %
+    % The output metric bessToLoadConversionLoss remains external
+    % converter loss only. Internal battery loss is kept separately in
+    % bessInternalLoss.
+    % ---------------------------------------------------------------------
+    P_bess_discharge_before_conversion_kW = P_bess_discharge_pack_terminal_kW;
 
     P_dcdc_discharge_loss_kW = zeros(1, N);
     dischargeMask = P_bess_discharge_dc_bus_kW > 1e-9;
-    P_dcdc_discharge_loss_kW(dischargeMask) = P_dcdc_loss_kW(dischargeMask);
 
-    P_central_loss_bess_to_ac_kW = P_loss_inv_kW .* bessInvShare;
+    P_dcdc_discharge_loss_kW(dischargeMask) = ...
+        P_dcdc_loss_kW(dischargeMask);
+
+    P_central_loss_bess_to_ac_kW = ...
+        P_central_loss_to_ac_kW .* bessInvShare;
 
     P_bess_discharge_external_loss_kW = ...
         P_dcdc_discharge_loss_kW + P_central_loss_bess_to_ac_kW;
 
     bessAcDen = max(P_bess_ac_after_conversion_kW, eps);
+
     bessToLoadShare = P_bess_to_load_kW ./ bessAcDen;
     bessToLoadShare(P_bess_ac_after_conversion_kW <= 1e-9) = 0;
 
     P_bess_to_load_conversion_loss_kW = ...
         bessToLoadShare .* P_bess_discharge_external_loss_kW;
+
+    P_grid_import_total_kW = P_grid_import_kW;
 
     buy_huf = Prices.buy_huf(:).';
 
@@ -298,7 +391,22 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     step_res.P_loss_central_inv_kW = P_loss_inv_kW(:);
     step_res.P_loss_pcsb_inv_kW = zeros(N, 1);
     step_res.P_loss_dcdc_kW = P_loss_dcdc_W(:) / 1000;
-    step_res.P_loss_bess_internal_kW = (pack_out.E_loss_joule(:) / 1000) ./ dt_h;
+    step_res.P_loss_bess_internal_kW = P_bess_internal_loss_kW(:);
+
+    % ---------------------------------------------------------------------
+    % Converter loss split for diagnostics
+    % ---------------------------------------------------------------------
+    step_res.P_loss_central_inv_dc_to_ac_kW = P_central_loss_to_ac_kW(:);
+    step_res.P_loss_central_inv_ac_to_dc_kW = P_central_loss_grid_to_bess_kW(:);
+
+    step_res.P_loss_dcdc_charge_kW = P_dcdc_charge_loss_kW(:);
+    step_res.P_loss_dcdc_discharge_kW = P_dcdc_discharge_loss_kW(:);
+
+    step_res.P_loss_pcsb_charge_kW = zeros(N, 1);
+    step_res.P_loss_pcsb_discharge_kW = zeros(N, 1);
+
+    step_res.P_loss_bess_internal_charge_kW = P_bess_internal_charge_loss_kW(:);
+    step_res.P_loss_bess_internal_discharge_kW = P_bess_internal_discharge_loss_kW(:);
     step_res.eta_central_inv = eta_inv_vec(:);
     step_res.eta_central_inv_base = eta_inv_base_vec(:);
     step_res.eta_dcdc_req = eta_dcdc_req_vec(:);
