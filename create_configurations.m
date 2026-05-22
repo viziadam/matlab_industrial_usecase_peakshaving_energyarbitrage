@@ -178,7 +178,7 @@ function cfg = create_configurations(basePath)
     % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-    cfg.diagnostics.enabled = false;
+    cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
     cfg.diagnostics.candidateIndex = 11;
 
