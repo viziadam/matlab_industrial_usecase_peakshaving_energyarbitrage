@@ -146,6 +146,7 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 
                 if isfield(cfgRun.diagnostics, 'makeDispatchDiagnosticPlots') && cfgRun.diagnostics.makeDispatchDiagnosticPlots
                     local_plot_embedded_dispatch_diagnostics(cfgRun, c, design, simSummary, detail);
+                    local_plot_canonical_energy_flow_diagnostics(cfgRun, c, simSummary);
                 end
             end
 
@@ -255,6 +256,40 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             end
 
             fprintf('\nFull evaluation saved:\n%s\n', fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
+        end
+    end
+end
+
+
+function local_plot_canonical_energy_flow_diagnostics(cfgRun, candidateIndex, simSummary)
+
+    if ~isfield(simSummary, 'full_result') || isempty(simSummary.full_result)
+        return;
+    end
+
+    fig = plot_canonical_energy_flow_diagnostics_4y(simSummary.full_result);
+
+    if isempty(fig) || ~isgraphics(fig, 'figure')
+        return;
+    end
+
+    outDir = fullfile( ...
+        cfgRun.diagnostics.outputFolder, ...
+        sprintf('candidate_%06d', candidateIndex), ...
+        'dispatch_diagnostics');
+
+    if ~exist(outDir, 'dir')
+        mkdir(outDir);
+    end
+
+    fileBase = fullfile(outDir, 'canonical_energy_flow_diagnostics');
+    savefig(fig, [fileBase, '.fig']);
+
+    try
+        exportgraphics(fig, [fileBase, '.png'], 'Resolution', 150);
+    catch
+        if isgraphics(fig, 'figure')
+            saveas(fig, [fileBase, '.png']);
         end
     end
 end
