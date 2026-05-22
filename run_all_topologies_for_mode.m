@@ -152,7 +152,17 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         runResult.(char(coupling)).DB = DB;
     end
 
-    if ~diagnosticMode
+    if diagnosticMode
+        % Teljes szimulalt idoszakra vonatkozo AC/DC diagnosztikai
+        % osszehasonlitas. A candidateTable-ben mentett, teljes horizonra
+        % osszegzett kanonikus metrikakbol dolgozik, nem a final_day-bol.
+        runResult.acDcDiagnosticComparison = ...
+            plot_ac_dc_diagnostic_comparison( ...
+                runResult, ...
+                cfgBase, ...
+                objectiveMode, ...
+                diagnosticCandidateIndex);
+    else
         compareResult = compare_ac_dc_results_for_mode(cfgBase, objectiveMode);
 
         if objectiveMode == "energy_only" || objectiveMode == "combined"
