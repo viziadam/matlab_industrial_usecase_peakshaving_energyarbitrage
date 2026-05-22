@@ -1,6 +1,13 @@
 function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_kW, P_load_kW, Prices, pars, state_bess, dt_h)
 % TOPOLOGY_DC_COUPLED
 % DC-csatolt PV+BESS topologia load-dependent central_inv es dcdc modellel.
+%
+% A fizikai mukodesi logika valtozatlan marad:
+%   BESS pack <-> DC/DC <-> kozos DC busz <-> central inverter <-> AC busz
+%
+% A fajl explicit, topologia-szintu energiaaramlasi mezoket is visszaad,
+% hogy a kiertekeles es a diagnosztika ne szarmaztasson kulonbozo modon
+% azonos fizikai mennyisegeket.
 
     P_bess_dc_req_kW = P_bess_dc_req_kW(:).';
     P_pv_dc_kW = P_pv_dc_kW(:).';
@@ -113,6 +120,123 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     P_grid_import_base_kW = max(P_grid_base_kW, 0);
     P_grid_export_base_kW = max(-P_grid_base_kW, 0);
 
+    % =====================================================================
+    % Explicit topology-level canonical energy-flow attribution
+    % =====================================================================
+    P_dcdc_loss_kW = P_loss_dcdc_W ./ 1000;
+
+    P_bess_charge_dc_bus_kW = max(-P_bess_dc_actual_kW, 0);
+    P_bess_discharge_dc_bus_kW = max(P_bess_dc_actual_kW, 0);
+
+    P_bess_charge_pack_kW = max(-P_pack_actual_kW, 0);
+    P_bess_discharge_pack_kW = max(P_pack_actual_kW, 0);
+
+    % Charge direction.
+    % PV -> BESS: PV DC -> DC/DC -> pack.
+    % Grid -> BESS: grid AC -> central inverter -> DC bus -> DC/DC -> pack.
+    P_pv_to_bess_kW = zeros(1, N);
+    P_grid_to_bess_after_central_kW = zeros(1, N);
+    P_grid_to_bess_kW = zeros(1, N);
+
+    chargeMask = P_bess_charge_dc_bus_kW > 1e-9;
+
+    P_pv_to_bess_kW(chargeMask) = min( ...
+        P_pv_dc_kW(chargeMask), ...
+        P_bess_charge_dc_bus_kW(chargeMask));
+
+    P_grid_to_bess_after_central_kW(chargeMask) = max( ...
+        P_bess_charge_dc_bus_kW(chargeMask) - P_pv_to_bess_kW(chargeMask), ...
+        0);
+
+    gridChargeMask = P_grid_to_bess_after_central_kW > 1e-9;
+
+    P_grid_to_bess_kW(gridChargeMask) = max( ...
+        -P_inv_ac_kW(gridChargeMask), ...
+        P_grid_to_bess_after_central_kW(gridChargeMask));
+
+    P_central_loss_grid_to_bess_kW = max( ...
+        P_grid_to_bess_kW - P_grid_to_bess_after_central_kW, ...
+        0);
+
+    chargeDen = max(P_bess_charge_dc_bus_kW, eps);
+    pvChargeShare = P_pv_to_bess_kW ./ chargeDen;
+    gridChargeShare = P_grid_to_bess_after_central_kW ./ chargeDen;
+    pvChargeShare(~chargeMask) = 0;
+    gridChargeShare(~chargeMask) = 0;
+
+    P_dcdc_charge_loss_kW = zeros(1, N);
+    P_dcdc_charge_loss_kW(chargeMask) = P_dcdc_loss_kW(chargeMask);
+
+    P_pv_to_bess_loss_kW = pvChargeShare .* P_dcdc_charge_loss_kW;
+    P_grid_to_bess_loss_kW = ...
+        P_central_loss_grid_to_bess_kW + ...
+        gridChargeShare .* P_dcdc_charge_loss_kW;
+
+    P_pv_to_bess_stored_kW = pvChargeShare .* P_bess_charge_pack_kW;
+    P_grid_to_bess_stored_kW = gridChargeShare .* P_bess_charge_pack_kW;
+
+    % Discharge direction.
+    % BESS -> load: pack -> DC/DC -> central inverter -> AC bus -> load.
+    P_pv_to_inverter_dc_kW = max(P_pv_dc_kW - P_pv_to_bess_kW, 0);
+    P_bess_to_inverter_dc_kW = P_bess_discharge_dc_bus_kW;
+    P_total_to_inverter_dc_kW = P_pv_to_inverter_dc_kW + P_bess_to_inverter_dc_kW;
+
+    invSourceDen = max(P_total_to_inverter_dc_kW, eps);
+    pvInvShare = P_pv_to_inverter_dc_kW ./ invSourceDen;
+    bessInvShare = P_bess_to_inverter_dc_kW ./ invSourceDen;
+
+    noInvSourceMask = P_total_to_inverter_dc_kW <= 1e-9;
+    pvInvShare(noInvSourceMask) = 0;
+    bessInvShare(noInvSourceMask) = 0;
+
+    P_inv_ac_positive_kW = max(P_inv_ac_kW, 0);
+    P_pv_ac_direct_kW = P_inv_ac_positive_kW .* pvInvShare;
+    P_bess_ac_after_conversion_kW = P_inv_ac_positive_kW .* bessInvShare;
+
+    P_pv_to_load_direct_kW = min(P_pv_ac_direct_kW, P_load_kW);
+    remainingLoadAfterPv_kW = max(P_load_kW - P_pv_to_load_direct_kW, 0);
+
+    P_bess_to_load_kW = min(P_bess_ac_after_conversion_kW, remainingLoadAfterPv_kW);
+    remainingLoadAfterBess_kW = max(P_load_kW - P_pv_to_load_direct_kW - P_bess_to_load_kW, 0);
+
+    P_grid_to_load_kW = remainingLoadAfterBess_kW;
+    P_grid_import_total_kW = P_grid_import_kW;
+
+    P_bess_discharge_before_conversion_kW = P_bess_discharge_pack_kW;
+
+    P_dcdc_discharge_loss_kW = zeros(1, N);
+    dischargeMask = P_bess_discharge_dc_bus_kW > 1e-9;
+    P_dcdc_discharge_loss_kW(dischargeMask) = P_dcdc_loss_kW(dischargeMask);
+
+    P_central_loss_bess_to_ac_kW = P_loss_inv_kW .* bessInvShare;
+
+    P_bess_discharge_external_loss_kW = ...
+        P_dcdc_discharge_loss_kW + P_central_loss_bess_to_ac_kW;
+
+    bessAcDen = max(P_bess_ac_after_conversion_kW, eps);
+    bessToLoadShare = P_bess_to_load_kW ./ bessAcDen;
+    bessToLoadShare(P_bess_ac_after_conversion_kW <= 1e-9) = 0;
+
+    P_bess_to_load_conversion_loss_kW = ...
+        bessToLoadShare .* P_bess_discharge_external_loss_kW;
+
+    buy_huf = Prices.buy_huf(:).';
+
+    C_grid_to_bess_import_HUF = ...
+        P_grid_to_bess_kW .* dt_h .* buy_huf;
+
+    C_grid_to_bess_stored_import_equiv_HUF = ...
+        P_grid_to_bess_stored_kW .* dt_h .* buy_huf;
+
+    C_bess_stored_import_equiv_HUF = ...
+        P_bess_charge_pack_kW .* dt_h .* buy_huf;
+
+    C_bess_discharge_before_conversion_import_equiv_HUF = ...
+        P_bess_discharge_before_conversion_kW .* dt_h .* buy_huf;
+
+    C_bess_to_load_import_equiv_HUF = ...
+        P_bess_to_load_kW .* dt_h .* buy_huf;
+
     step_res = struct();
     step_res.E_pv_dc = P_pv_dc_kW .* dt_h;
     step_res.E_load = P_load_kW .* dt_h;
@@ -139,6 +263,26 @@ function [step_res, state_bess] = topology_dc_coupled(P_bess_dc_req_kW, P_pv_dc_
     step_res.P_grid_net_kW = P_grid_net_kW(:);
     step_res.P_grid_import_kW = P_grid_import_kW(:);
     step_res.P_grid_export_kW = P_grid_export_kW(:);
+
+    step_res.P_pv_to_bess_kW = P_pv_to_bess_kW(:);
+    step_res.P_grid_to_bess_kW = P_grid_to_bess_kW(:);
+    step_res.P_pv_to_bess_stored_kW = P_pv_to_bess_stored_kW(:);
+    step_res.P_grid_to_bess_stored_kW = P_grid_to_bess_stored_kW(:);
+    step_res.P_pv_to_bess_loss_kW = P_pv_to_bess_loss_kW(:);
+    step_res.P_grid_to_bess_loss_kW = P_grid_to_bess_loss_kW(:);
+    step_res.P_bess_discharge_before_conversion_kW = P_bess_discharge_before_conversion_kW(:);
+    step_res.P_bess_to_load_kW = P_bess_to_load_kW(:);
+    step_res.P_bess_to_load_conversion_loss_kW = P_bess_to_load_conversion_loss_kW(:);
+    step_res.P_pv_to_load_direct_kW = P_pv_to_load_direct_kW(:);
+    step_res.P_grid_to_load_kW = P_grid_to_load_kW(:);
+    step_res.P_grid_import_total_kW = P_grid_import_total_kW(:);
+
+    step_res.C_grid_to_bess_import_HUF = C_grid_to_bess_import_HUF(:);
+    step_res.C_grid_to_bess_stored_import_equiv_HUF = C_grid_to_bess_stored_import_equiv_HUF(:);
+    step_res.C_bess_stored_import_equiv_HUF = C_bess_stored_import_equiv_HUF(:);
+    step_res.C_bess_discharge_before_conversion_import_equiv_HUF = C_bess_discharge_before_conversion_import_equiv_HUF(:);
+    step_res.C_bess_to_load_import_equiv_HUF = C_bess_to_load_import_equiv_HUF(:);
+
     step_res.P_bess_actual_kW = P_bess_dc_actual_kW(:);
     step_res.P_bess_dc_actual_kW = P_bess_dc_actual_kW(:);
     step_res.P_pack_actual_kW = P_pack_actual_kW(:);
