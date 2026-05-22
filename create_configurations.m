@@ -180,7 +180,7 @@ function cfg = create_configurations(basePath)
     cfg.diagnostics = struct();
     cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
-    cfg.diagnostics.candidateIndex = 11;
+    cfg.diagnostics.candidateIndex = 9;
 
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;
@@ -189,7 +189,7 @@ function cfg = create_configurations(basePath)
         cfg.diagnostics.saveFigures = true;
         cfg.diagnostics.closeFiguresAfterSave = false;
         cfg.diagnostics.printPlannerDebug = false;
-        cfg.diagnostics.maxPrintedDebugDays = 15;
+        cfg.diagnostics.maxPrintedDebugDays = 8;
         cfg.diagnostics.makePlannerExecutionDebugPlot = true;
         cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
         cfg.diagnostics.makeDispatchDiagnosticPlots = true;
@@ -200,7 +200,7 @@ function cfg = create_configurations(basePath)
         cfg.diagnostics.saveFigures = false;
         cfg.diagnostics.closeFiguresAfterSave = false;
         cfg.diagnostics.printPlannerDebug = false;
-        cfg.diagnostics.maxPrintedDebugDays = 15;
+        cfg.diagnostics.maxPrintedDebugDays = 8;
         cfg.diagnostics.makePlannerExecutionDebugPlot = false;
         cfg.diagnostics.plotDispatchDiagnosticsForBaseline = false;
         cfg.diagnostics.makeDispatchDiagnosticPlots = false;
@@ -217,8 +217,8 @@ function cfg = create_configurations(basePath)
     % 12) Detail / selected day plotting configuration
     % =====================================================================
     cfg.detail = struct();
-    cfg.detail.max_representative_plots = 8;
-    cfg.detail.max_overrun_days = 8;
+    cfg.detail.max_representative_plots = 4;
+    cfg.detail.max_overrun_days = 4;
     cfg.detail.overrun_tolerance_kW = 1e-6;
 
     % =====================================================================
