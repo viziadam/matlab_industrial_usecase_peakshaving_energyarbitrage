@@ -110,7 +110,7 @@ function cfg = create_configurations(basePath)
     % 6) BESS candidate space
     % =====================================================================
     % cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
-    cfg.candidates.BESS_PV_ratio_vec = [1 2 3];
+    cfg.candidates.BESS_PV_ratio_vec = [0 1 2 3];
     cfg.candidates.bessDuration_h = 2;
 
     cfg.candidates.designFields = { ...

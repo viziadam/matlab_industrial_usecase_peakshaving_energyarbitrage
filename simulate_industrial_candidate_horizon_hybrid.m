@@ -90,4 +90,9 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
     simSummary.full_result = full_result;
     simSummary.contractSearchRuntime_s = contractSearchRuntime_s;
     simSummary.fullHorizonRuntime_s = fullHorizonRuntime_s;
+    if isfield(full_result, 'runtimeProfile')
+        simSummary.fullHorizonProfile = full_result.runtimeProfile;
+    else
+        simSummary.fullHorizonProfile = struct();
+    end
 end

@@ -3,6 +3,11 @@ function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveM
 %
 % Betölti az egységes candidate-szintű kiértékelési cache-t.
 %
+% A függvény robusztus arra az esetre, ha:
+%   cfgBase.paths.results = .../results
+% vagy:
+%   cfgBase.paths.results = .../results/energy_only
+%
 % Használható:
 %   - csak DC kiértékeléshez,
 %   - csak AC kiértékeléshez,
@@ -16,9 +21,10 @@ function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveM
     objectiveMode = lower(string(objectiveMode));
     coupling = lower(string(coupling));
 
+    modeResultsDir = local_resolve_mode_results_dir(cfgBase, objectiveMode);
+
     cachePath = fullfile( ...
-        cfgBase.paths.results, ...
-        char(objectiveMode), ...
+        modeResultsDir, ...
         'evaluation_cache', ...
         sprintf('candidate_metrics_%s_%s.mat', coupling, objectiveMode));
 
@@ -36,7 +42,27 @@ function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveM
 
     if nargin >= 4 && ~isempty(candidateList)
         candidateList = candidateList(:);
-        candidateMetrics = candidateMetrics( ...
-            ismember(candidateMetrics.candidateIndex, candidateList), :);
+
+        if ismember('candidateIndex', candidateMetrics.Properties.VariableNames)
+            candidateMetrics = candidateMetrics( ...
+                ismember(candidateMetrics.candidateIndex, candidateList), :);
+        else
+            warning('candidateMetrics does not contain candidateIndex column. Candidate filtering skipped.');
+        end
+    end
+end
+
+
+function modeResultsDir = local_resolve_mode_results_dir(cfgBase, objectiveMode)
+
+    baseResultsDir = char(cfgBase.paths.results);
+    objectiveModeChar = char(objectiveMode);
+
+    [~, lastFolder] = fileparts(baseResultsDir);
+
+    if strcmpi(lastFolder, objectiveModeChar)
+        modeResultsDir = baseResultsDir;
+    else
+        modeResultsDir = fullfile(baseResultsDir, objectiveModeChar);
     end
 end

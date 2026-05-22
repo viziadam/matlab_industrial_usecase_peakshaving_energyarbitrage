@@ -146,10 +146,23 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         candidateMetrics = save_canonical_candidate_metrics(DB, cfg); %#ok<NASGU>
 
         if ~diagnosticMode && coupling ~= "hybrid"
-            evalCfg = create_evaluation_config(cfg);
-            evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+
+            if local_has_valid_baseline_candidate(DB)
+
+                evalCfg = create_evaluation_config(cfg);
+                evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
+
+            else
+
+                fprintf('\nLegacy evaluation skipped for %s because no valid BESS_PV_ratio = 0 baseline candidate was found.\n', coupling);
+                fprintf('Simulation results and canonical candidate metrics were saved successfully.\n');
+
+            end
+
         elseif ~diagnosticMode && coupling == "hybrid"
+
             fprintf('\nHybrid DB saved. Legacy evaluation skipped for hybrid; use the future hybrid evaluator.\n');
+
         end
 
         runResult.(char(coupling)).cfg = cfg;
@@ -181,4 +194,28 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     end
 
     runResult.finishedAt = datetime('now');
+end
+
+function hasBaseline = local_has_valid_baseline_candidate(DB)
+
+    hasBaseline = false;
+
+    if ~isfield(DB, 'candidateTable') || isempty(DB.candidateTable)
+        return;
+    end
+
+    T = DB.candidateTable;
+
+    requiredColumns = {'BESS_PV_ratio', 'wasSimulated', 'hasError'};
+
+    for i = 1:numel(requiredColumns)
+        if ~ismember(requiredColumns{i}, T.Properties.VariableNames)
+            return;
+        end
+    end
+
+    validMask = logical(T.wasSimulated) & ~logical(T.hasError);
+    baselineMask = abs(T.BESS_PV_ratio) < 1e-12;
+
+    hasBaseline = any(validMask & baselineMask);
 end
