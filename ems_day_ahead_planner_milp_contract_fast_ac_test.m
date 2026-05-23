@@ -1,0 +1,269 @@
+function plan = ems_day_ahead_planner_milp_contract_fast_ac_test( ...
+    P_load_f, P_pv_dc_f, Prices, pars, tariff, dt_h, contract_state, maxSolverTime_s)
+% EMS_DAY_AHEAD_PLANNER_MILP_CONTRACT_FAST_AC_TEST
+%
+% Fast AC test planner:
+%   1) LP-relaxation solve
+%   2) accept only if no simultaneous charge/discharge
+%   3) otherwise fallback to production MILP
+
+    if nargin < 8
+        maxSolverTime_s = 15;
+    end
+
+    simultaneousTol_kW = 1e-5;
+
+    if isfield(pars, 'lpSimultaneousPowerTolerance_kW')
+        simultaneousTol_kW = pars.lpSimultaneousPowerTolerance_kW;
+    end
+
+    Pload = P_load_f(:);
+    Ppvdc = max(P_pv_dc_f(:), 0);
+    buy = Prices.buy_huf(:);
+
+    N = numel(Pload);
+
+    if numel(Ppvdc) ~= N || numel(buy) ~= N
+        error('Input length mismatch in fast AC planner.');
+    end
+
+    SoC0 = local_get_field(pars, 'SoC_initial', 0.5);
+    SoC0 = min(max(SoC0, pars.SoC_min), pars.SoC_max);
+
+    Pcontract = contract_state.P_contract_kW;
+    PmonthOld = contract_state.P_month_max_so_far_kW;
+
+    safety = local_get_field(contract_state, 'P_contract_safety_factor', 0.90);
+    Plimit = safety * Pcontract;
+
+    etaCentralInvNom = pars.central_inv_eta_nom;
+    etaPcsNom = pars.pcs_eta_nom;
+
+    Ppv = min(Ppvdc * etaCentralInvNom, pars.P_inv_limit_ac);
+
+    PchMax = pars.P_chg_max / etaPcsNom;
+    PdisMax = pars.P_dis_max * etaPcsNom;
+
+    etaCh = etaPcsNom * pars.eta_cell;
+    etaDis = etaPcsNom * pars.eta_cell;
+
+    deg = build_article_simple_degradation_costs(pars);
+    cCh = deg.cost_ch_huf_per_kWh;
+    cDis = deg.cost_dis_huf_per_kWh;
+
+    buyTotal = buy ...
+        + tariff.distribution_energy_rate_huf_per_kWh ...
+        + tariff.transmission_energy_rate_huf_per_kWh;
+
+    n = 0;
+
+    iPgL    = n + (1:N); n = n + N;
+    iPgB    = n + (1:N); n = n + N;
+    iPpvL   = n + (1:N); n = n + N;
+    iPpvB   = n + (1:N); n = n + N;
+    iPbL    = n + (1:N); n = n + N;
+    iPspill = n + (1:N); n = n + N;
+    iSoc    = n + (1:N); n = n + N;
+    iMode   = n + (1:N); n = n + N;
+
+    nVars = n;
+
+    f = zeros(nVars, 1);
+
+    f(iPgL) = buyTotal * dt_h;
+    f(iPgB) = buyTotal * dt_h + cCh * etaPcsNom * dt_h;
+    f(iPpvB) = cCh * etaPcsNom * dt_h;
+    f(iPbL) = cDis * (1 / etaPcsNom) * dt_h;
+
+    AeqLoad = sparse(N, nVars);
+    beqLoad = Pload;
+
+    for t = 1:N
+        AeqLoad(t, iPgL(t)) = 1;
+        AeqLoad(t, iPpvL(t)) = 1;
+        AeqLoad(t, iPbL(t)) = 1;
+    end
+
+    AeqPv = sparse(N, nVars);
+    beqPv = Ppv;
+
+    for t = 1:N
+        AeqPv(t, iPpvL(t)) = 1;
+        AeqPv(t, iPpvB(t)) = 1;
+        AeqPv(t, iPspill(t)) = 1;
+    end
+
+    AeqSoc = sparse(N, nVars);
+    beqSoc = zeros(N, 1);
+
+    aCh = etaCh * dt_h / pars.E_cap_nom;
+    aDis = dt_h / etaDis / pars.E_cap_nom;
+
+    AeqSoc(1, iSoc(1)) = 1;
+    beqSoc(1) = SoC0;
+
+    for t = 2:N
+        AeqSoc(t, iSoc(t)) = 1;
+        AeqSoc(t, iSoc(t-1)) = -1;
+        AeqSoc(t, iPgB(t-1)) = -aCh;
+        AeqSoc(t, iPpvB(t-1)) = -aCh;
+        AeqSoc(t, iPbL(t-1)) = aDis;
+    end
+
+    Aeq = [AeqLoad; AeqPv; AeqSoc];
+    beq = [beqLoad; beqPv; beqSoc];
+
+    A = sparse(0, nVars);
+    b = zeros(0, 1);
+
+    AMode = sparse(2 * N, nVars);
+    bMode = zeros(2 * N, 1);
+
+    for t = 1:N
+        AMode(t, iPgB(t)) = 1;
+        AMode(t, iPpvB(t)) = 1;
+        AMode(t, iMode(t)) = -PchMax;
+
+        AMode(N + t, iPbL(t)) = 1;
+        AMode(N + t, iMode(t)) = PdisMax;
+        bMode(N + t) = PdisMax;
+    end
+
+    A = [A; AMode];
+    b = [b; bMode];
+
+    AGrid = sparse(N, nVars);
+    bGrid = Plimit * ones(N, 1);
+
+    for t = 1:N
+        AGrid(t, iPgL(t)) = 1;
+        AGrid(t, iPgB(t)) = 1;
+    end
+
+    A = [A; AGrid];
+    b = [b; bGrid];
+
+    lb = zeros(nVars, 1);
+    ub = inf(nVars, 1);
+
+    lb(iSoc) = pars.SoC_min;
+    ub(iSoc) = pars.SoC_max;
+
+    lb(iMode) = 0;
+    ub(iMode) = 1;
+
+    lpOptions = optimoptions('linprog', ...
+        'Display', 'off', ...
+        'Algorithm', 'dual-simplex');
+
+    try
+        lpOptions.MaxTime = maxSolverTime_s;
+    catch
+    end
+
+    tLp = tic;
+
+    [x, fval, exitflag] = linprog( ...
+        f, A, b, Aeq, beq, lb, ub, lpOptions);
+
+    lpRuntime_s = toc(tLp);
+
+    acceptLp = false;
+    maxSimultaneous_kW = inf;
+
+    if ~isempty(x) && exitflag > 0 && isfinite(fval)
+        PgB = x(iPgB);
+        PpvB = x(iPpvB);
+        PbL = x(iPbL);
+
+        Pch = PgB + PpvB;
+        Pdis = PbL;
+
+        maxSimultaneous_kW = max(min(max(Pch(:), 0), max(Pdis(:), 0)));
+
+        if maxSimultaneous_kW <= simultaneousTol_kW
+            acceptLp = true;
+        end
+    end
+
+    if ~acceptLp
+        plan = ems_day_ahead_planner_milp_contract_ac( ...
+            P_load_f, P_pv_dc_f, Prices, pars, tariff, ...
+            dt_h, contract_state, maxSolverTime_s);
+
+        plan.fastSolver = "milp_fallback_current_production";
+        plan.fastLpAccepted = false;
+        plan.fastLpRuntime_s = lpRuntime_s;
+        plan.fastLpExitflag = exitflag;
+        plan.fastLpMaxSimultaneousChargeDischarge_kW = maxSimultaneous_kW;
+        return;
+    end
+
+    PgL = x(iPgL);
+    PgB = x(iPgB);
+    PpvL = x(iPpvL);
+    PpvB = x(iPpvB);
+    PbL = x(iPbL);
+    Pspill = x(iPspill);
+    SoC = x(iSoc);
+
+    Pgrid = PgL + PgB;
+    Pch = PgB + PpvB;
+    Pdis = PbL;
+
+    Pover = max(Pgrid - Plimit, 0);
+    Ppeak = max(PmonthOld, max(Pgrid));
+
+    plan = struct();
+
+    plan.is_feasible = true;
+    plan.used_fallback = false;
+
+    plan.P_contract = Pcontract;
+    plan.P_contract_safety_factor = safety;
+    plan.P_grid_limit = Plimit;
+    plan.P_month_max_so_far = PmonthOld;
+    plan.P_month_peak_candidate = Ppeak;
+    plan.P_overrun_increment_kW = max(Pover);
+
+    plan.trade_buy_mask = (Pch > 1e-6).';
+    plan.trade_sell_mask = (Pdis > 1e-6).';
+
+    plan.P_grid_plan = Pgrid(:);
+    plan.P_ch_plan = Pch(:);
+    plan.P_dis_plan = Pdis(:);
+    plan.P_curt_plan = Pspill(:);
+
+    plan.P_gload_plan = PgL(:);
+    plan.P_gbatt_plan = PgB(:);
+    plan.P_pvload_plan = PpvL(:);
+    plan.P_pvbatt_plan = PpvB(:);
+    plan.P_bload_plan = PbL(:);
+    plan.P_spill_plan = Pspill(:);
+    plan.P_over_plan = Pover(:);
+    plan.P_over_step_plan = Pover(:);
+    plan.P_pv_ac_plan = Ppv(:);
+
+    plan.SoC_plan = SoC(:);
+
+    plan.exitflag = exitflag;
+    plan.objective_value = fval;
+    plan.P_bess_plan_reference_side = "ac_bus";
+
+    plan.fastSolver = "linprog_lp_relaxation_accepted";
+    plan.fastLpAccepted = true;
+    plan.fastLpRuntime_s = lpRuntime_s;
+    plan.fastLpExitflag = exitflag;
+    plan.fastLpMaxSimultaneousChargeDischarge_kW = maxSimultaneous_kW;
+    plan.fastLpTolerance_kW = simultaneousTol_kW;
+end
+
+
+function value = local_get_field(S, fieldName, defaultValue)
+
+    if isstruct(S) && isfield(S, fieldName)
+        value = S.(fieldName);
+    else
+        value = defaultValue;
+    end
+end

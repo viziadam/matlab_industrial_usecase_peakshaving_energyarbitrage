@@ -217,6 +217,18 @@ function value = local_compute_derived_metric(T, rowIdx, operation, inputs)
 
             value = local_safe_divide(a, b);
 
+        case "ratioPercent"
+            a = local_get_table_value(T, rowIdx, inputs{1});
+            b = local_get_table_value(T, rowIdx, inputs{2});
+
+            value = 100 * local_safe_divide(a, b);
+
+        case "productPercent"
+            a = local_get_table_value(T, rowIdx, inputs{1});
+            b = local_get_table_value(T, rowIdx, inputs{2});
+
+            value = local_safe_divide(a * b, 100);
+
         case "percentReduction"
             baseline = local_get_table_value(T, rowIdx, inputs{1});
             actual = local_get_table_value(T, rowIdx, inputs{2});

@@ -1,25 +1,25 @@
-function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveMode, coupling, candidateList)
+function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveMode, coupling, candidateList, tableKind)
 % LOAD_CANONICAL_CANDIDATE_METRICS
 %
-% Betölti az egységes candidate-szintű kiértékelési cache-t.
+% Betolti az egységes candidate-szintu kiertekelesi cache-t.
 %
-% A függvény robusztus arra az esetre, ha:
-%   cfgBase.paths.results = .../results
-% vagy:
-%   cfgBase.paths.results = .../results/energy_only
+% tableKind:
+%   "detailed"  - teljes reszletes tabla
+%   "important" - fontosabb metrikak tabla
 %
-% Használható:
-%   - csak DC kiértékeléshez,
-%   - csak AC kiértékeléshez,
-%   - AC/DC összehasonlításhoz,
-%   - diagnosztikai vagy teljes futás után.
+% Alapertelmezett: "detailed"
 
     if nargin < 4
         candidateList = [];
     end
 
+    if nargin < 5 || strlength(string(tableKind)) == 0
+        tableKind = "detailed";
+    end
+
     objectiveMode = lower(string(objectiveMode));
     coupling = lower(string(coupling));
+    tableKind = lower(string(tableKind));
 
     modeResultsDir = local_resolve_mode_results_dir(cfgBase, objectiveMode);
 
@@ -32,13 +32,30 @@ function candidateMetrics = load_canonical_candidate_metrics(cfgBase, objectiveM
         error('Canonical candidate metric cache not found: %s', cachePath);
     end
 
-    S = load(cachePath, 'candidateMetrics');
+    S = load(cachePath);
 
-    if ~isfield(S, 'candidateMetrics')
-        error('File does not contain candidateMetrics variable: %s', cachePath);
+    switch tableKind
+        case "detailed"
+
+            if isfield(S, 'candidateMetricsDetailed')
+                candidateMetrics = S.candidateMetricsDetailed;
+            elseif isfield(S, 'candidateMetrics')
+                candidateMetrics = S.candidateMetrics;
+            else
+                error('File does not contain candidateMetricsDetailed or candidateMetrics: %s', cachePath);
+            end
+
+        case "important"
+
+            if isfield(S, 'candidateMetricsImportant')
+                candidateMetrics = S.candidateMetricsImportant;
+            else
+                error('File does not contain candidateMetricsImportant: %s', cachePath);
+            end
+
+        otherwise
+            error('Invalid tableKind: %s', tableKind);
     end
-
-    candidateMetrics = S.candidateMetrics;
 
     if nargin >= 4 && ~isempty(candidateList)
         candidateList = candidateList(:);

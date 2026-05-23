@@ -39,10 +39,6 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         cfgBase.profiling.enabled = true;
     end
 
-    % A kanonikus topologiai energiaaramlasi es veszteseg metrikakat
-    % minden uzemmodban mentjuk, nem csak energy_only/combined modban.
-    cfgBase = add_energy_only_evaluation_metrics_to_cfg(cfgBase);
-
     data = build_data(cfgBase);
 
     industrialCtxForOverview = prepare_industrial_simulation_context(data, cfgBase);
@@ -87,12 +83,6 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
                 'P_BESS_ac_kW'};
         end
 
-        % Idempotens, ezert biztonsagos minden couplingnal ujrahivni.
-        cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
-
-        if coupling == "hybrid"
-            cfg = add_hybrid_evaluation_metrics_to_cfg(cfg);
-        end
 
         cfg.paths.results = fullfile(cfgBase.paths.results, char(objectiveMode));
         cfg.paths.figures = fullfile(cfg.paths.results, 'figures');

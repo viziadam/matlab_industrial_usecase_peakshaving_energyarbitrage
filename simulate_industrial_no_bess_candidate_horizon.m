@@ -73,8 +73,16 @@ function [running, simSummary, detail] = simulate_industrial_no_bess_candidate_h
     summarySource = struct();
 
     summarySource.bestContract_kW = best_contract_kW;
+
     summarySource.finalSoC = NaN;
     summarySource.finalSoH = NaN;
+    summarySource.finalSoH_pct = NaN;
+
+    summarySource.finalSoCDc = NaN;
+    summarySource.finalSoCAc = NaN;
+    summarySource.finalSoHDc = NaN;
+    summarySource.finalSoHAc = NaN;
+
     summarySource.contractSearchRuntime_s = contractSearchRuntime_s;
     summarySource.fullHorizonRuntime_s = fullHorizonRuntime_s;
 

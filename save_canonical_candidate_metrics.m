@@ -1,18 +1,17 @@
-function candidateMetrics = save_canonical_candidate_metrics(DB, cfg)
+function [candidateMetricsImportant, candidateMetricsDetailed] = save_canonical_candidate_metrics(DB, cfg)
 % SAVE_CANONICAL_CANDIDATE_METRICS
 %
-% Egységes, candidate-szintű kiértékelési cache mentése.
+% Egységes candidate-szintű kiértékelési cache mentése.
 %
-% Cél:
-%   - diagnosztikai és teljes futás esetén is ugyanabba a formába menteni
-%     az AC/DC/hybrid candidate eredményeket,
-%   - később a plotok ebből dolgozzanak, ne közvetlenül a nyers
-%     candidateTable-ből,
-%   - ha csak a kiértékelés/plot változik, ne kelljen újraszimulálni.
+% Mentett táblák:
+%   candidateMetricsImportant
+%       - dolgozati / gyors kiértékelési metrikák
 %
-% Mentési hely:
-%   results/<mode>/evaluation_cache/candidate_metrics_<coupling>_<mode>.mat
-%   results/<mode>/evaluation_cache/candidate_metrics_<coupling>_<mode>.csv
+%   candidateMetricsDetailed
+%       - teljes candidateTable minden oszloppal
+%
+%   candidateMetrics
+%       - kompatibilitási alias, ugyanaz mint candidateMetricsDetailed
 
     if ~isfield(DB, 'candidateTable') || isempty(DB.candidateTable)
         error('DB.candidateTable is missing or empty.');
@@ -32,35 +31,64 @@ function candidateMetrics = save_canonical_candidate_metrics(DB, cfg)
     matPath = fullfile(cacheDir, sprintf( ...
         'candidate_metrics_%s_%s.mat', coupling, objectiveMode));
 
-    csvPath = fullfile(cacheDir, sprintf( ...
-        'candidate_metrics_%s_%s.csv', coupling, objectiveMode));
+    csvImportantPath = fullfile(cacheDir, sprintf( ...
+        'candidate_metrics_important_%s_%s.csv', coupling, objectiveMode));
+
+    csvDetailedPath = fullfile(cacheDir, sprintf( ...
+        'candidate_metrics_detailed_%s_%s.csv', coupling, objectiveMode));
 
     rowsToSave = local_get_rows_to_save(T);
 
     if isempty(rowsToSave)
         fprintf('\nNo simulated candidate rows found for canonical metric cache.\n');
-        candidateMetrics = table();
+        candidateMetricsImportant = table();
+        candidateMetricsDetailed = table();
+        candidateMetrics = candidateMetricsDetailed; %#ok<NASGU>
+        save(matPath, ...
+            'candidateMetrics', ...
+            'candidateMetricsImportant', ...
+            'candidateMetricsDetailed', ...
+            '-v7.3');
         return;
     end
 
-    newMetrics = local_build_metric_table(T, rowsToSave, coupling, objectiveMode);
+    newDetailed = local_build_detailed_table(T, rowsToSave, coupling, objectiveMode, cfg);
+    newImportant = local_build_important_table(newDetailed);
 
     if exist(matPath, 'file')
-        S = load(matPath, 'candidateMetrics');
+        S = load(matPath);
 
-        if isfield(S, 'candidateMetrics') && ~isempty(S.candidateMetrics)
-            oldMetrics = S.candidateMetrics;
+        if isfield(S, 'candidateMetricsDetailed')
+            oldDetailed = S.candidateMetricsDetailed;
+        elseif isfield(S, 'candidateMetrics')
+            oldDetailed = S.candidateMetrics;
         else
-            oldMetrics = table();
+            oldDetailed = table();
+        end
+
+        if isfield(S, 'candidateMetricsImportant')
+            oldImportant = S.candidateMetricsImportant;
+        else
+            oldImportant = table();
         end
     else
-        oldMetrics = table();
+        oldDetailed = table();
+        oldImportant = table();
     end
 
-    candidateMetrics = local_upsert_metrics(oldMetrics, newMetrics);
+    candidateMetricsDetailed = local_upsert_metrics(oldDetailed, newDetailed);
+    candidateMetricsImportant = local_upsert_metrics(oldImportant, newImportant);
 
-    save(matPath, 'candidateMetrics', '-v7.3');
-    writetable(candidateMetrics, csvPath);
+    candidateMetrics = candidateMetricsDetailed; %#ok<NASGU>
+
+    save(matPath, ...
+        'candidateMetrics', ...
+        'candidateMetricsImportant', ...
+        'candidateMetricsDetailed', ...
+        '-v7.3');
+
+    writetable(candidateMetricsImportant, csvImportantPath);
+    writetable(candidateMetricsDetailed, csvDetailedPath);
 
     fprintf('\nCanonical candidate metric cache saved:\n%s\n', matPath);
 end
@@ -84,174 +112,222 @@ function rowsToSave = local_get_rows_to_save(T)
 end
 
 
-function M = local_build_metric_table(T, rows, coupling, objectiveMode)
+function M = local_build_detailed_table(T, rows, coupling, objectiveMode, cfg)
 
-    n = numel(rows);
+    M = T(rows, :);
 
-    M = table();
-    M.objectiveMode = repmat(objectiveMode, n, 1);
-    M.coupling = repmat(coupling, n, 1);
-    M.candidateIndex = rows(:);
+    n = height(M);
 
-    M.candidateID = strings(n, 1);
-
-    for i = 1:n
-        r = rows(i);
-
-        if ismember('candidateID', T.Properties.VariableNames)
-            M.candidateID(i) = string(T.candidateID(r));
-        else
-            M.candidateID(i) = sprintf('candidate_%06d', r);
-        end
+    if ~ismember('objectiveMode', M.Properties.VariableNames)
+        M.objectiveMode = repmat(objectiveMode, n, 1);
     end
 
-    % ---------------------------------------------------------------------
-    % Design / sizing
-    % ---------------------------------------------------------------------
-    M.P_PV_kW = local_metric(T, rows, {'P_PV_kW'});
-    M.P_inv_kW = local_metric(T, rows, {'P_inv_kW'});
-    M.E_BESS_kWh = local_metric(T, rows, {'E_BESS_kWh'});
-    M.P_BESS_kW = local_metric(T, rows, {'P_BESS_kW'});
-    M.BESS_PV_ratio = local_metric(T, rows, {'BESS_PV_ratio'});
+    if ~ismember('coupling', M.Properties.VariableNames)
+        M.coupling = repmat(coupling, n, 1);
+    end
 
-    % ---------------------------------------------------------------------
-    % Main energy metrics
-    % ---------------------------------------------------------------------
-    M.gridImportNoBess_kWh = local_metric(T, rows, { ...
-        'gridImportNoBess_kWh', ...
-        'gridImportBase_kWh'});
+    if ~ismember('candidateIndex', M.Properties.VariableNames)
+        M.candidateIndex = rows(:);
+    end
 
-    M.gridImport_kWh = local_metric(T, rows, { ...
-        'gridImport_kWh', ...
-        'gridEnergyImport_kWh'});
+    if ~ismember('candidateID', M.Properties.VariableNames)
+        M.candidateID = strings(n, 1);
 
-    M.gridToLoad_kWh = local_metric(T, rows, {'gridToLoad_kWh'});
-    M.pvToLoad_kWh = local_metric(T, rows, {'pvToLoad_kWh'});
-    M.bessToLoad_kWh = local_metric(T, rows, {'bessToLoad_kWh'});
+        for i = 1:n
+            M.candidateID(i) = sprintf('candidate_%06d', rows(i));
+        end
+    else
+        M.candidateID = string(M.candidateID);
+    end
 
-    M.gridToBess_kWh = local_metric(T, rows, {'gridToBess_kWh'});
-    M.gridToBessStored_kWh = local_metric(T, rows, {'gridToBessStored_kWh'});
-    M.pvToBess_kWh = local_metric(T, rows, {'pvToBess_kWh'});
-    M.pvToBessStored_kWh = local_metric(T, rows, {'pvToBessStored_kWh'});
+    M.objectiveMode = string(M.objectiveMode);
+    M.coupling = string(M.coupling);
 
-    M.bessCharge_kWh = local_metric(T, rows, {'bessCharge_kWh'});
-    M.bessDischarge_kWh = local_metric(T, rows, {'bessDischarge_kWh'});
-    M.bessThroughput_kWh = local_metric(T, rows, {'bessThroughput_kWh'});
-    M.bessDischargeBeforeConversion_kWh = local_metric(T, rows, {'bessDischargeBeforeConversion_kWh'});
+    M = local_add_consistency_metrics(M, cfg);
+end
 
-    % ---------------------------------------------------------------------
-    % Loss metrics
-    % ---------------------------------------------------------------------
-    M.gridToBessLoss_kWh = local_metric(T, rows, {'gridToBessLoss_kWh'});
-    M.pvToBessLoss_kWh = local_metric(T, rows, {'pvToBessLoss_kWh'});
-    M.bessToLoadConversionLoss_kWh = local_metric(T, rows, {'bessToLoadConversionLoss_kWh'});
 
-    M.centralInverterLoss_kWh = local_metric(T, rows, {'centralInverterLoss_kWh'});
-    M.dcdcLoss_kWh = local_metric(T, rows, {'dcdcLoss_kWh'});
-    M.pcsbInverterLoss_kWh = local_metric(T, rows, {'pcsbInverterLoss_kWh'});
-    M.bessInternalLoss_kWh = local_metric(T, rows, {'bessInternalLoss_kWh'});
+function M = local_build_important_table(D)
 
-    M.totalConverterLoss_kWh = local_sum_columns([ ...
-        M.centralInverterLoss_kWh, ...
-        M.dcdcLoss_kWh, ...
-        M.pcsbInverterLoss_kWh]);
-
-    M.trackedPathConverterLoss_kWh = local_sum_columns([ ...
-        M.gridToBessLoss_kWh, ...
-        M.pvToBessLoss_kWh, ...
-        M.bessToLoadConversionLoss_kWh]);
-
-    M.otherConverterLoss_kWh = max( ...
-        M.totalConverterLoss_kWh - M.trackedPathConverterLoss_kWh, ...
-        0);
-
-    % ---------------------------------------------------------------------
-    % Technical indicators
-    % ---------------------------------------------------------------------
-    M.equivalentCycles = local_metric(T, rows, { ...
-        'equivalentCycles', ...
-        'equivalentCycleCount', ...
-        'bessEquivalentCycles'});
-
-    missingCycles = ~isfinite(M.equivalentCycles);
-
-    M.equivalentCycles(missingCycles) = local_safe_divide( ...
-        M.bessThroughput_kWh(missingCycles), ...
-        2 .* M.E_BESS_kWh(missingCycles));
-
-    M.equivalentCycles(~isfinite(M.equivalentCycles)) = 0;
-
-    M.finalSoH_pct = local_metric(T, rows, { ...
+    keepCols = { ...
+        'objectiveMode', ...
+        'coupling', ...
+        'candidateIndex', ...
+        'candidateID', ...
+        'BESS_PV_ratio', ...
+        'P_PV_kW', ...
+        'P_inv_kW', ...
+        'E_BESS_kWh', ...
+        'P_BESS_kW', ...
+        'bestContract_kW', ...
+        'finalSoC', ...
         'finalSoH', ...
-        'SOH_end', ...
-        'SoH_final', ...
-        'finalSOH'});
+        'finalSoH_pct', ...
+        'loadEnergy_kWh', ...
+        'pvEnergyAvailable_kWh', ...
+        'gridImportNoBess_kWh', ...
+        'gridImport_kWh', ...
+        'gridImportReduction_kWh', ...
+        'gridImportReduction_pct', ...
+        'gridToLoad_kWh', ...
+        'pvToLoad_kWh', ...
+        'bessToLoad_kWh', ...
+        'gridToBess_kWh', ...
+        'gridToBessStored_kWh', ...
+        'gridToBessLoss_kWh', ...
+        'pvToBess_kWh', ...
+        'pvToBessStored_kWh', ...
+        'pvToBessLoss_kWh', ...
+        'bessCharge_kWh', ...
+        'bessDischarge_kWh', ...
+        'bessThroughput_kWh', ...
+        'bessDischargeBeforeConversion_kWh', ...
+        'bessToLoadConversionLoss_kWh', ...
+        'centralInverterLoss_kWh', ...
+        'centralInvDcToAcLoss_kWh', ...
+        'centralInvAcToDcLoss_kWh', ...
+        'dcdcLoss_kWh', ...
+        'dcdcChargeLoss_kWh', ...
+        'dcdcDischargeLoss_kWh', ...
+        'pcsbInverterLoss_kWh', ...
+        'pcsbChargeLoss_kWh', ...
+        'pcsbDischargeLoss_kWh', ...
+        'bessInternalLoss_kWh', ...
+        'bessInternalChargeLoss_kWh', ...
+        'bessInternalDischargeLoss_kWh', ...
+        'totalConverterLoss_kWh', ...
+        'curtailment_kWh', ...
+        'energyCostNoBess_HUF', ...
+        'energyCost_HUF', ...
+        'energyCostSaving_HUF', ...
+        'degradationCost_HUF', ...
+        'degradationCostCorrected_HUF', ...
+        'overrunCost_HUF', ...
+        'contractCost_HUF', ...
+        'objectiveCost_HUF', ...
+        'gridToBessChargeEfficiency_pct', ...
+        'pvToBessChargeEfficiency_pct', ...
+        'bessDischargeToLoadEfficiency_pct', ...
+        'gridToBessToLoadEfficiency_pct', ...
+        'pvToBessToLoadEfficiency_pct', ...
+        'maxLoadPeak_kW', ...
+        'maxPVPeak_kW', ...
+        'maxGridImportPeak_kW', ...
+        'maxGridImportNoBessPeak_kW', ...
+        'maxBessChargePeak_kW', ...
+        'maxBessDischargePeak_kW', ...
+        'equivalentCycles' ...
+    };
 
-    sohFractionMask = isfinite(M.finalSoH_pct) & M.finalSoH_pct <= 1.5;
-    M.finalSoH_pct(sohFractionMask) = 100 .* M.finalSoH_pct(sohFractionMask);
+    M = table();
 
-    % ---------------------------------------------------------------------
-    % Cost metrics
-    % ---------------------------------------------------------------------
-    M.energyCostNoBess_HUF = local_metric(T, rows, {'energyCostNoBess_HUF'});
-    M.energyCost_HUF = local_metric(T, rows, {'energyCost_HUF'});
-    M.energyCostSaving_HUF = M.energyCostNoBess_HUF - M.energyCost_HUF;
+    for i = 1:numel(keepCols)
+        col = keepCols{i};
 
-    M.degradationCost_HUF = local_zero_if_nan(local_metric(T, rows, {'degradationCost_HUF'}));
-    M.overrunCost_HUF = local_zero_if_nan(local_metric(T, rows, {'overrunCost_HUF'}));
-    M.contractCost_HUF = local_zero_if_nan(local_metric(T, rows, {'contractCost_HUF'}));
+        if ismember(col, D.Properties.VariableNames)
+            M.(col) = D.(col);
+        end
+    end
+end
 
-    M.costBalance_HUF = ...
-        local_zero_if_nan(M.energyCostSaving_HUF) ...
-        - M.degradationCost_HUF ...
-        - M.overrunCost_HUF ...
-        - M.contractCost_HUF;
 
-    % ---------------------------------------------------------------------
-    % Import-price based value metrics
-    % ---------------------------------------------------------------------
-    M.gridToBessImportCost_HUF = local_metric(T, rows, {'gridToBessImportCost_HUF'});
-    M.gridToBessStoredImportEquivCost_HUF = local_metric(T, rows, {'gridToBessStoredImportEquivCost_HUF'});
-    M.bessStoredImportEquivCost_HUF = local_metric(T, rows, {'bessStoredImportEquivCost_HUF'});
-    M.bessDischargeBeforeConversionImportEquivCost_HUF = local_metric(T, rows, {'bessDischargeBeforeConversionImportEquivCost_HUF'});
-    M.bessToLoadImportEquivCost_HUF = local_metric(T, rows, {'bessToLoadImportEquivCost_HUF'});
+function T = local_add_consistency_metrics(T, cfg)
 
-    M.gridToBessChargeLossValue_HUF = ...
-        M.gridToBessImportCost_HUF ...
-        - M.gridToBessStoredImportEquivCost_HUF;
+    if ismember('finalSoH', T.Properties.VariableNames)
+        T.finalSoH_pct = T.finalSoH;
 
-    M.bessDischargePathLossValue_HUF = ...
-        M.bessDischargeBeforeConversionImportEquivCost_HUF ...
-        - M.bessToLoadImportEquivCost_HUF;
+        mask = isfinite(T.finalSoH_pct) & T.finalSoH_pct <= 1.5;
+        T.finalSoH_pct(mask) = 100 .* T.finalSoH_pct(mask);
+    end
 
-    % ---------------------------------------------------------------------
-    % Derived ratios
-    % ---------------------------------------------------------------------
-    M.gridImportReduction_kWh = M.gridImportNoBess_kWh - M.gridImport_kWh;
+    if all(ismember({'gridImportNoBess_kWh', 'gridImport_kWh'}, T.Properties.VariableNames))
+        T.gridImportReduction_kWh = T.gridImportNoBess_kWh - T.gridImport_kWh;
+        T.gridImportReduction_pct = 100 .* local_safe_divide( ...
+            T.gridImportReduction_kWh, ...
+            T.gridImportNoBess_kWh);
+    end
 
-    M.gridImport_pct_of_noBess = 100 .* local_safe_divide( ...
-        M.gridImport_kWh, ...
-        M.gridImportNoBess_kWh);
+    if all(ismember({'gridToBessStored_kWh', 'gridToBess_kWh'}, T.Properties.VariableNames))
+        T.gridToBessChargeEfficiency_pct = 100 .* local_safe_divide( ...
+            T.gridToBessStored_kWh, ...
+            T.gridToBess_kWh);
+    end
 
-    M.gridImportReduction_pct = 100 .* local_safe_divide( ...
-        M.gridImportReduction_kWh, ...
-        M.gridImportNoBess_kWh);
+    if all(ismember({'pvToBessStored_kWh', 'pvToBess_kWh'}, T.Properties.VariableNames))
+        T.pvToBessChargeEfficiency_pct = 100 .* local_safe_divide( ...
+            T.pvToBessStored_kWh, ...
+            T.pvToBess_kWh);
+    end
 
-    M.gridToBess_pct_of_noBess = 100 .* local_safe_divide( ...
-        M.gridToBess_kWh, ...
-        M.gridImportNoBess_kWh);
+    if all(ismember({'bessToLoad_kWh', 'bessDischargeBeforeConversion_kWh'}, T.Properties.VariableNames))
+        T.bessDischargeToLoadEfficiency_pct = 100 .* local_safe_divide( ...
+            T.bessToLoad_kWh, ...
+            T.bessDischargeBeforeConversion_kWh);
+    end
 
-    M.gridToBess_charge_eff_pct = 100 .* local_safe_divide( ...
-        M.gridToBessStored_kWh, ...
-        M.gridToBess_kWh);
+    if all(ismember({'gridToBessChargeEfficiency_pct', 'bessDischargeToLoadEfficiency_pct'}, T.Properties.VariableNames))
+        T.gridToBessToLoadEfficiency_pct = ...
+            T.gridToBessChargeEfficiency_pct .* ...
+            T.bessDischargeToLoadEfficiency_pct ./ 100;
+    end
 
-    M.bessDischarge_to_load_eff_pct = 100 .* local_safe_divide( ...
-        M.bessToLoad_kWh, ...
-        M.bessDischargeBeforeConversion_kWh);
+    if all(ismember({'pvToBessChargeEfficiency_pct', 'bessDischargeToLoadEfficiency_pct'}, T.Properties.VariableNames))
+        T.pvToBessToLoadEfficiency_pct = ...
+            T.pvToBessChargeEfficiency_pct .* ...
+            T.bessDischargeToLoadEfficiency_pct ./ 100;
+    end
 
-    M.overall_gridToBess_to_load_eff_pct = ...
-        M.gridToBess_charge_eff_pct ...
-        .* M.bessDischarge_to_load_eff_pct ./ 100;
+    if all(ismember({'centralInvDcToAcLoss_kWh', ...
+                     'centralInvAcToDcLoss_kWh', ...
+                     'dcdcChargeLoss_kWh', ...
+                     'dcdcDischargeLoss_kWh', ...
+                     'pcsbChargeLoss_kWh', ...
+                     'pcsbDischargeLoss_kWh'}, T.Properties.VariableNames))
+
+        T.totalConverterLossFromSplit_kWh = ...
+            T.centralInvDcToAcLoss_kWh + ...
+            T.centralInvAcToDcLoss_kWh + ...
+            T.dcdcChargeLoss_kWh + ...
+            T.dcdcDischargeLoss_kWh + ...
+            T.pcsbChargeLoss_kWh + ...
+            T.pcsbDischargeLoss_kWh;
+    end
+
+    if all(ismember({'E_BESS_kWh', 'P_BESS_kW'}, T.Properties.VariableNames))
+
+        costPars = local_get_bess_cost_parameters_from_cfg(cfg);
+
+        T.capexBESSEnergy_HUF = ...
+            T.E_BESS_kWh .* costPars.bess_huf_per_kWh;
+
+        T.capexBESSPower_HUF = ...
+            T.P_BESS_kW .* costPars.bess_power_huf_per_kW;
+
+        T.capexBESS_HUF = ...
+            T.capexBESSEnergy_HUF + ...
+            T.capexBESSPower_HUF;
+    end
+
+    if all(ismember({'finalSoH', 'capexBESS_HUF'}, T.Properties.VariableNames))
+
+        costPars = local_get_bess_cost_parameters_from_cfg(cfg);
+
+        T.degradationCostCorrected_HUF = ...
+            max(0, (1 - T.finalSoH) ./ costPars.bess_eol_soh_window) .* ...
+            T.capexBESS_HUF;
+
+        noBessMask = false(height(T), 1);
+
+        if ismember('E_BESS_kWh', T.Properties.VariableNames)
+            noBessMask = noBessMask | T.E_BESS_kWh <= 0;
+        end
+
+        if ismember('P_BESS_kW', T.Properties.VariableNames)
+            noBessMask = noBessMask | T.P_BESS_kW <= 0;
+        end
+
+        T.degradationCostCorrected_HUF(noBessMask) = NaN;
+    end
 end
 
 
@@ -289,10 +365,12 @@ function T1 = local_align_table_variables(T1, T2)
 
         if isnumeric(T2.(name))
             T1.(name) = NaN(height(T1), 1);
+        elseif islogical(T2.(name))
+            T1.(name) = false(height(T1), 1);
         elseif isstring(T2.(name))
             T1.(name) = strings(height(T1), 1);
         else
-            T1.(name) = repmat(missing, height(T1), 1);
+            T1.(name) = cell(height(T1), 1);
         end
     end
 
@@ -308,72 +386,52 @@ function key = local_make_key(T)
 end
 
 
-function values = local_metric(T, rows, names)
-
-    values = NaN(numel(rows), 1);
-
-    for k = 1:numel(names)
-        name = names{k};
-
-        if ismember(name, T.Properties.VariableNames)
-            raw = T.(name)(rows);
-            values = local_to_numeric_column(raw);
-            return;
-        end
-    end
-end
-
-
-function values = local_to_numeric_column(raw)
-
-    if isnumeric(raw) || islogical(raw)
-        values = double(raw(:));
-        return;
-    end
-
-    if iscell(raw)
-        values = NaN(numel(raw), 1);
-
-        for i = 1:numel(raw)
-            x = raw{i};
-
-            if isnumeric(x) && isscalar(x)
-                values(i) = double(x);
-            elseif isstring(x) || ischar(x)
-                values(i) = str2double(x);
-            end
-        end
-
-        return;
-    end
-
-    if isstring(raw) || ischar(raw)
-        values = str2double(string(raw(:)));
-        return;
-    end
-
-    values = NaN(numel(raw), 1);
-end
-
-
 function y = local_safe_divide(a, b)
-
     y = NaN(size(a));
 
     mask = isfinite(a) & isfinite(b) & abs(b) > 1e-12;
     y(mask) = a(mask) ./ b(mask);
 end
 
+function costPars = local_get_bess_cost_parameters_from_cfg(cfg)
 
-function y = local_zero_if_nan(x)
+    if ~isfield(cfg, 'cost')
+        error('Missing cfg.cost structure for BESS CAPEX and degradation cost evaluation.');
+    end
 
-    y = x;
-    y(~isfinite(y)) = 0;
-end
+    requiredCostFields = { ...
+        'bess_huf_per_kWh', ...
+        'bess_power_huf_per_kW', ...
+        'bess_eol_soh_window'};
 
+    for i = 1:numel(requiredCostFields)
 
-function s = local_sum_columns(X)
+        fieldName = requiredCostFields{i};
 
-    X(~isfinite(X)) = 0;
-    s = sum(X, 2);
+        if ~isfield(cfg.cost, fieldName)
+            error('Missing cfg.cost.%s. Define it in create_configurations.m.', fieldName);
+        end
+
+        if ~isnumeric(cfg.cost.(fieldName)) || ~isscalar(cfg.cost.(fieldName))
+            error('cfg.cost.%s must be a numeric scalar.', fieldName);
+        end
+    end
+
+    if cfg.cost.bess_huf_per_kWh < 0
+        error('cfg.cost.bess_huf_per_kWh must be non-negative.');
+    end
+
+    if cfg.cost.bess_power_huf_per_kW < 0
+        error('cfg.cost.bess_power_huf_per_kW must be non-negative.');
+    end
+
+    if cfg.cost.bess_eol_soh_window <= 0
+        error('cfg.cost.bess_eol_soh_window must be positive. Example: 0.2 for 100%% -> 80%% SoH.');
+    end
+
+    costPars = struct();
+
+    costPars.bess_huf_per_kWh = cfg.cost.bess_huf_per_kWh;
+    costPars.bess_power_huf_per_kW = cfg.cost.bess_power_huf_per_kW;
+    costPars.bess_eol_soh_window = cfg.cost.bess_eol_soh_window;
 end
