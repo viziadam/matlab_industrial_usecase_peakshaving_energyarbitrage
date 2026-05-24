@@ -487,6 +487,7 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
         % Energy path quantities [MWh]
         % -----------------------------------------------------------------
         T.gridImport_MWh = T.gridImport_kWh / 1000;
+
         T.gridToBess_MWh = T.gridToBess_kWh / 1000;
         T.gridToBessStored_MWh = T.gridToBessStored_kWh / 1000;
         T.gridToBessLoss_MWh = max(T.gridToBess_MWh - T.gridToBessStored_MWh, 0);
@@ -508,7 +509,7 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
             max(T.bessDischargeBeforeConversion_MWh - T.bessToLoad_MWh, 0);
 
         % -----------------------------------------------------------------
-        % Efficiencies [%]
+        % Energy path efficiencies [%]
         % -----------------------------------------------------------------
         T.gridToBessChargeEfficiency_pct = ...
             local_eff_percent(T.gridToBessStored_MWh, T.gridToBess_MWh);
@@ -528,7 +529,7 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
             T.bessDischargeToLoadEfficiency_pct / 100;
 
         % -----------------------------------------------------------------
-        % SoH and degradation
+        % SoH and SoH-based degradation CAPEX impact
         % -----------------------------------------------------------------
         if ~ismember('finalSoH_pct', T.Properties.VariableNames)
             T.finalSoH_pct = 100 * T.finalSoH;
@@ -544,14 +545,21 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
             eolWindow = 0.2;
         end
 
+        % Correct degradation value for economic evaluation:
+        %
+        %   degradation CAPEX impact =
+        %       (1 - finalSoH) / eolWindow * BESS_CAPEX
+        %
+        % With eolWindow = 0.2 this means the used share of the
+        % 100% -> 80% SoH lifetime window.
         T.correctedDegradationCost_MHUF = ...
             max(0, (1 - T.finalSoH) ./ eolWindow) .* capex_HUF / 1e6;
 
+        % Same value with a clearer name for the economic figure.
+        T.degradationCapexImpact_MHUF = T.correctedDegradationCost_MHUF;
+
         % -----------------------------------------------------------------
-        % Cost differences relative to BESS = 0
-        %
-        % Positive value = saving compared to BESS = 0.
-        % Negative value = extra cost compared to BESS = 0.
+        % Cost quantities [M HUF]
         % -----------------------------------------------------------------
         idxZero = find(abs(T.E_BESS_kWh) <= 1e-12, 1, 'first');
 
@@ -560,7 +568,6 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
         end
 
         T.energyCost_MHUF = T.energyCost_HUF / 1e6;
-        T.degradationCost_MHUF = T.degradationCost_HUF / 1e6;
         T.objectiveCost_MHUF = T.objectiveCost_HUF / 1e6;
 
         if ismember('contractCost_HUF', T.Properties.VariableNames)
@@ -575,6 +582,22 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
             T.overrunCost_MHUF = zeros(height(T), 1);
         end
 
+        % This is kept only as a diagnostic value for the MILP/simulation
+        % throughput-based degradation penalty.
+        %
+        % It must not be used as the degradation component in the final
+        % economic evaluation figure.
+        T.degradationCostThroughput_MHUF = T.degradationCost_HUF / 1e6;
+
+        % -----------------------------------------------------------------
+        % Cost differences relative to BESS = 0
+        %
+        % Positive value:
+        %   the BESS case is cheaper than the BESS = 0 reference.
+        %
+        % Negative value:
+        %   the BESS case is more expensive than the BESS = 0 reference.
+        % -----------------------------------------------------------------
         T.energyCostSavingVsZero_MHUF = ...
             T.energyCost_MHUF(idxZero) - T.energyCost_MHUF;
 
@@ -584,29 +607,39 @@ function data = local_prepare_energy_only_diagnostic_columns(data, cfg)
         T.overrunCostSavingVsZero_MHUF = ...
             T.overrunCost_MHUF(idxZero) - T.overrunCost_MHUF;
 
+        % SoH-based degradation CAPEX impact relative to BESS = 0.
+        %
+        % BESS = 0 esetben ez 0, ezert a BESS-es eseteknel negativ
+        % komponenskent jelenik meg:
+        %
+        %   0 - ((1 - finalSoH) / 0.2 * BESS_CAPEX)
+        T.degradationCapexImpactVsZero_MHUF = ...
+            T.degradationCapexImpact_MHUF(idxZero) - T.degradationCapexImpact_MHUF;
+
+        % Backward-compatible alias.
+        %
+        % Ha valamelyik figSpec meg a regi mezot keresi, akkor ne fusson
+        % hibara. Fontos: ennek a tartalma mar NEM a MILP throughput-alapu
+        % degradationCost_HUF, hanem a SoH-alapu CAPEX-hatas.
         T.degradationCostSavingVsZero_MHUF = ...
-            T.degradationCost_MHUF(idxZero) - T.degradationCost_MHUF;
+            T.degradationCapexImpactVsZero_MHUF;
 
-        T.objectiveCostSavingVsZero_MHUF = ...
-            T.objectiveCost_MHUF(idxZero) - T.objectiveCost_MHUF;
-
-        % -----------------------------------------------------------------
-        % Net saving / NPV-like value relative to BESS = 0.
+        % Net saving / NPV-like value over the investigated period.
         %
-        % Positive value:
-        %   the BESS case is economically better than the BESS = 0 case.
-        %
-        % Negative value:
-        %   the BESS case is economically worse than the BESS = 0 case.
-        %
-        % This value is calculated from the same signed components that are
-        % displayed in the stacked cost-difference figure.
-        % -----------------------------------------------------------------
+        % This is the sum of the same signed components shown in the
+        % stacked cost-difference figure.
         T.netSavingVsZero_MHUF = ...
             T.energyCostSavingVsZero_MHUF + ...
             T.contractCostSavingVsZero_MHUF + ...
             T.overrunCostSavingVsZero_MHUF + ...
-            T.degradationCostSavingVsZero_MHUF;
+            T.degradationCapexImpactVsZero_MHUF;
+
+        % Optional diagnostic comparison:
+        % the objective-based saving, still using the simulation/MILP
+        % objectiveCost_HUF. This is not used in the final economic figure
+        % unless explicitly selected.
+        T.objectiveCostSavingVsZero_MHUF = ...
+            T.objectiveCost_MHUF(idxZero) - T.objectiveCost_MHUF;
 
         data.(char(coupling)).candidateTable = T;
     end
