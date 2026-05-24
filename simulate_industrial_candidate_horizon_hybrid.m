@@ -61,6 +61,11 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
     search_cfg.dispatch.target_step_min = cfg.targetStepMin;
     search_cfg.dispatch.objectiveMode = "combined";
     search_cfg.dispatch.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
+    search_cfg.dispatch.useFastDayAheadMILP = local_get_bool_field(cfg.dispatch, 'useFastDayAheadMILP', false);
+
+    if isfield(cfg.dispatch, 'fastMilpSimultaneousPowerTolerance_kW')
+        search_cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW;
+    end
 
     tSearch = tic;
     search_result = search_optimal_contract_capacity(day_cache, industrialCtx.rep_set_proxy, industrialCtx.rep_set_valid, pars, tariff, search_cfg);
@@ -94,5 +99,13 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
         simSummary.fullHorizonProfile = full_result.runtimeProfile;
     else
         simSummary.fullHorizonProfile = struct();
+    end
+end
+
+function value = local_get_bool_field(S, fieldName, defaultValue)
+    if isstruct(S) && isfield(S, fieldName)
+        value = logical(S.(fieldName));
+    else
+        value = defaultValue;
     end
 end

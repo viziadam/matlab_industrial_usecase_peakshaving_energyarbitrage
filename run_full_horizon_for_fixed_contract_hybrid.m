@@ -72,6 +72,11 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
     detail_day_indices = unique(detail_cfg.day_indices(:).');
     detail_day_indices = detail_day_indices(detail_day_indices >= 1 & detail_day_indices <= nDays);
 
+    useFastDayAheadMILP = false;
+    if isfield(cfg, 'dispatch') && isfield(cfg.dispatch, 'useFastDayAheadMILP')
+        useFastDayAheadMILP = logical(cfg.dispatch.useFastDayAheadMILP);
+    end
+
     for kk = 1:nDays
 
         tDay = tic;
@@ -99,6 +104,11 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
         dispatch_cfg.bessCoupling = "hybrid";
         dispatch_cfg.objectiveMode = "combined";
         dispatch_cfg.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
+        dispatch_cfg.useFastDayAheadMILP = useFastDayAheadMILP;
+
+        if isfield(cfg.dispatch, 'fastMilpSimultaneousPowerTolerance_kW')
+            dispatch_cfg.fastMilpSimultaneousPowerTolerance_kW = cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW;
+        end
 
         tStage = tic;
         plan_full = call_day_ahead_planner_by_mode( ...

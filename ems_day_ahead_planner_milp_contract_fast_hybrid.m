@@ -1,25 +1,14 @@
-function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
+function plan = ems_day_ahead_planner_milp_contract_fast_hybrid( ...
     P_load_f, P_pv_dc_f, Prices, pars, tariff, dt_h, contract_state, maxSolverTime_s)
-% EMS_DAY_AHEAD_PLANNER_MILP_CONTRACT_HYBRID
-% Production mixed-integer hybrid AC+DC BESS combined planner.
-%
-% The model contains two separate BESS branches and a shared central inverter:
-%   - DC BESS: PV DC bus <-> DC/DC <-> BESS pack
-%   - AC BESS: AC bus <-> PCS <-> BESS pack
-%   - central inverter: shared DC/AC path for PV, DC-BESS discharge and
-%     grid-to-DC-BESS charging.
-%
-% The central inverter has its own binary direction variable, so the planner
-% cannot use the same inverter simultaneously in DC->AC and AC->DC direction.
+% Fast LP-relaxed hybrid AC+DC BESS combined planner.
+% The LP relaxation is accepted only if both BESS branches and the shared
+% central inverter are practically non-simultaneous in opposite directions.
 
     if nargin < 8
         maxSolverTime_s = 15;
     end
 
-    local_require_fields(pars, {'dc','ac','P_inv_limit_ac','central_inv_eta_nom','dcdc_eta_nom','pcs_eta_nom'}, 'pars');
-    local_require_fields(pars.dc, {'E_cap_nom','P_chg_max','P_dis_max','SoC_min','SoC_max','eta_cell'}, 'pars.dc');
-    local_require_fields(pars.ac, {'E_cap_nom','P_chg_max','P_dis_max','SoC_min','SoC_max','eta_cell'}, 'pars.ac');
-    local_require_fields(tariff, {'distribution_energy_rate_huf_per_kWh','transmission_energy_rate_huf_per_kWh'}, 'tariff');
+    simultaneousTol_kW = 1e-5;
 
     Pload = P_load_f(:);
     Ppv = max(P_pv_dc_f(:), 0);
@@ -27,7 +16,7 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     N = numel(Pload);
 
     if numel(Ppv) ~= N || numel(buy) ~= N
-        error('HYBRID MILP bemeneti vektorhossz elteres.');
+        error('HYBRID fast MILP input length mismatch.');
     end
 
     SoC0dc = local_get_field(pars, 'SoC_initial_dc', 0.5);
@@ -145,13 +134,10 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     AInv = sparse(2 * N, nVars);
     bInv = zeros(2 * N, 1);
     for t = 1:N
-        % DC->AC central inverter output is allowed only when iModeInv = 1.
         AInv(t, iPpvL(t)) = 1;
         AInv(t, iPpvBac(t)) = 1;
         AInv(t, iPbDcL(t)) = 1;
         AInv(t, iModeInv(t)) = -pars.P_inv_limit_ac;
-
-        % AC->DC grid charging of the DC BESS is allowed only when iModeInv = 0.
         AInv(N+t, iPgBdc(t)) = 1;
         AInv(N+t, iModeInv(t)) = pars.P_inv_limit_ac;
         bInv(N+t) = pars.P_inv_limit_ac;
@@ -196,19 +182,43 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     ub(iModeDc) = 1;
     ub(iModeAc) = 1;
     ub(iModeInv) = 1;
-    intcon = [iModeDc, iModeAc, iModeInv];
 
-    options = optimoptions('intlinprog', ...
-        'Display', 'off', ...
-        'MaxTime', maxSolverTime_s, ...
-        'RelativeGapTolerance', 0.01, ...
-        'IntegerPreprocess', 'advanced', ...
-        'RootLPAlgorithm', 'dual-simplex');
+    try
+        options = optimoptions('linprog', 'Display', 'off', 'Algorithm', 'dual-simplex', 'MaxTime', maxSolverTime_s);
+    catch
+        options = optimoptions('linprog', 'Display', 'off');
+    end
 
-    [x, fval, exitflag] = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub, options);
+    tLp = tic;
+    [x, fval, exitflag] = linprog(f, A, b, Aeq, beq, lb, ub, options);
+    lpRuntime_s = toc(tLp);
 
-    if isempty(x) || exitflag <= 0 || ~isfinite(fval)
+    acceptLp = false;
+    maxSim = inf;
+    maxInvSim = inf;
+    if ~isempty(x) && exitflag > 0 && isfinite(fval)
+        PgBdc = x(iPgBdc); PgBac = x(iPgBac); PpvBdc = x(iPpvBdc); PpvBac = x(iPpvBac);
+        PbDcL = x(iPbDcL); PbAcL = x(iPbAcL); PpvL = x(iPpvL);
+        PchDc = etaInv .* PgBdc + PpvBdc;
+        PdisDc = PbDcL ./ etaInv;
+        PchAc = PgBac + PpvBac;
+        PdisAc = PbAcL;
+        invOut = PpvL + PpvBac + PbDcL;
+        invIn = PgBdc;
+        maxSim = max([min(max(PchDc(:), 0), max(PdisDc(:), 0)); min(max(PchAc(:), 0), max(PdisAc(:), 0))]);
+        maxInvSim = max(min(max(invOut(:), 0), max(invIn(:), 0)));
+        acceptLp = maxSim <= simultaneousTol_kW && maxInvSim <= simultaneousTol_kW;
+    end
+
+    if ~acceptLp
         plan = local_infeasible_hybrid_plan(N, Pcontract, safety, Plimit, PmonthOld, SoC0dc, SoC0ac, exitflag);
+        plan.fastSolver = "linprog_lp_rejected_no_fallback";
+        plan.fastLpAccepted = false;
+        plan.fastLpRuntime_s = lpRuntime_s;
+        plan.fastLpExitflag = exitflag;
+        plan.fastLpMaxSimultaneousChargeDischarge_kW = maxSim;
+        plan.fastLpMaxCentralInverterBidirectional_kW = maxInvSim;
+        plan.fastLpTolerance_kW = simultaneousTol_kW;
         return;
     end
 
@@ -260,9 +270,13 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     plan.SoC_ac_plan = SocAc(:);
     plan.SoC_plan = ((SocDc(:) .* pars.dc.E_cap_nom) + (SocAc(:) .* pars.ac.E_cap_nom)) ./ max(pars.dc.E_cap_nom + pars.ac.E_cap_nom, eps);
     plan.objective_value = fval;
-    plan.central_inv_eta_nom = etaInv;
-    plan.dcdc_eta_nom = etaDcdc;
-    plan.pcs_eta_nom = etaPcs;
+    plan.fastSolver = "linprog_lp_relaxation_accepted";
+    plan.fastLpAccepted = true;
+    plan.fastLpRuntime_s = lpRuntime_s;
+    plan.fastLpExitflag = exitflag;
+    plan.fastLpMaxSimultaneousChargeDischarge_kW = maxSim;
+    plan.fastLpMaxCentralInverterBidirectional_kW = maxInvSim;
+    plan.fastLpTolerance_kW = simultaneousTol_kW;
 
     energyMarket = sum(buy(:) .* Pgrid(:)) * dt_h;
     energyNetwork = sum((tariff.distribution_energy_rate_huf_per_kWh + tariff.transmission_energy_rate_huf_per_kWh) .* Pgrid(:)) * dt_h;
@@ -320,14 +334,6 @@ function plan = local_build_plan(N, Pcontract, safety, Plimit, PmonthOld, SoC0dc
     plan.exitflag = exitflag;
     plan.objective_value = inf;
     plan.P_bess_plan_reference_side = "hybrid_split";
-end
-
-function local_require_fields(S, fields, label)
-    for k = 1:numel(fields)
-        if ~isfield(S, fields{k})
-            error('Hianyzo mezo: %s.%s', label, fields{k});
-        end
-    end
 end
 
 function value = local_get_field(S, fieldName, defaultValue)
