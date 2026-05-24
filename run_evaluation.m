@@ -1,53 +1,69 @@
-function evalResult = run_evaluation(mode)
+function evalResult = run_evaluation(mode, opts)
 % RUN_EVALUATION
 %
-% Mentett AC/DC szimulacios eredmenyekbol ujrageneralja a dolgozati
-% kiertekeleseket a megadott mukodesi modra.
+% Kozponti evaluation indito.
 %
 % Hasznalat:
 %   run_evaluation()
-%   run_evaluation("peak_only")
 %   run_evaluation("energy_only")
+%   run_evaluation("peak_only")
 %   run_evaluation("combined")
 %   run_evaluation("all")
 %
-% Fontos:
-%   Ez a fuggveny nem futtatja ujra a teljes candidate szimulaciot.
-%   Csak a results/<mode>/results_dc_<mode>.mat es
-%   results/<mode>/results_ac_<mode>.mat fajlokbol dolgozik.
+% Ez a fuggveny:
+%   1) kivalasztja az uzemmodot,
+%   2) betolti a mentett AC/DC eredmenyeket,
+%   3) meghivja az uzemmodhoz tartozo evaluation fajlt,
+%   4) a visszakapott figSpecs alapjan legeneralja az abrakat.
 %
-% Megjegyzes:
-%   A hybrid AC+DC BESS eredmenyeket kesobb kulon hybrid kiertekelo fajl
-%   dolgozza fel. Ez a fuggveny tovabbra is a legacy AC/DC dolgozati
-%   kiertekelesek kozponti inditoja.
+% Nem futtat szimulaciot.
+% Nem hasznalja a regi plotokat.
+% A plotting logikat az eval_build_figures es eval_plot_axis kezeli.
 
     if nargin < 1 || strlength(string(mode)) == 0
         mode = "combined";
     end
 
+    if nargin < 2 || isempty(opts)
+        opts = struct();
+    end
+
+    opts = local_set_default(opts, 'couplings', ["dc", "ac"]);
+    opts = local_set_default(opts, 'candidateList', []);
+    opts = local_set_default(opts, 'save', true);
+    opts = local_set_default(opts, 'close', false);
+    opts = local_set_default(opts, 'figSize', [100 80 1450 900]);
+
     mode = lower(string(mode));
     basePath = fileparts(mfilename('fullpath'));
 
     if mode == "all"
-        modesToRun = ["peak_only", "energy_only", "combined"];
-
-        evalResult = struct();
-
-        for k = 1:numel(modesToRun)
-            currentMode = modesToRun(k);
-            evalResult.(char(currentMode)) = local_run_single_mode(basePath, currentMode);
-        end
-
-        return;
+        modesToRun = ["energy_only", "peak_only", "combined"];
+    else
+        modesToRun = mode;
     end
 
-    evalResult = local_run_single_mode(basePath, mode);
+    evalResult = struct();
+    evalResult.modes = modesToRun;
+    evalResult.results = struct();
+
+    for k = 1:numel(modesToRun)
+
+        currentMode = modesToRun(k);
+
+        fprintf('\n====================================================\n');
+        fprintf('EVALUATION MODE: %s\n', currentMode);
+        fprintf('====================================================\n');
+
+        evalResult.results.(char(currentMode)) = ...
+            local_run_single_mode(basePath, currentMode, opts);
+    end
 end
 
 
-function result = local_run_single_mode(basePath, mode)
+function result = local_run_single_mode(basePath, mode, opts)
 
-    allowedModes = ["peak_only", "energy_only", "combined"];
+    allowedModes = ["energy_only", "peak_only", "combined"];
 
     if ~any(mode == allowedModes)
         error('Invalid evaluation mode: %s', mode);
@@ -56,50 +72,163 @@ function result = local_run_single_mode(basePath, mode)
     cfg = create_configurations(basePath);
     cfg.dispatch.objectiveMode = mode;
 
-    if mode == "energy_only" || mode == "combined"
-        cfg = add_energy_only_evaluation_metrics_to_cfg(cfg);
+    data = local_load_mode_data(cfg, mode, opts);
+
+    switch mode
+
+        case "energy_only"
+            [figSpecs, data] = evaluation_energy_only(data, cfg, opts);
+
+        case "peak_only"
+            [figSpecs, data] = evaluation_peak_only(data, cfg, opts);
+
+        case "combined"
+            [figSpecs, data] = evaluation_combined(data, cfg, opts);
     end
+
+    outputFolder = local_output_folder(cfg, mode, opts);
+
+    plotOpts = opts;
+    plotOpts.outputFolder = outputFolder;
+
+    figs = eval_build_figures(data, figSpecs, plotOpts);
 
     result = struct();
     result.mode = mode;
+    result.cfg = cfg;
+    result.data = data;
+    result.figSpecs = figSpecs;
+    result.figures = figs;
+    result.outputFolder = outputFolder;
 
-    fprintf('\n====================================================\n');
-    fprintf('EVALUATION MODE: %s\n', mode);
-    fprintf('====================================================\n');
+    fprintf('\nEvaluation finished for mode: %s\n', mode);
+    fprintf('Output folder: %s\n', outputFolder);
+end
 
-    % ------------------------------------------------------------------
-    % Altalanos AC/DC osszehasonlito kiertekeles
-    % ------------------------------------------------------------------
-    result.compareResult = compare_ac_dc_results_for_mode(cfg, mode);
 
-    % ------------------------------------------------------------------
-    % Extra energiaaramlasi / veszteseg / idealis megtakaritasi abrak
-    % ------------------------------------------------------------------
-    % Ezeket korabban a teljes szimulacio vegerol hivtuk. Itt is meghivjuk,
-    % hogy run_evaluation(mode) onmagaban eleg legyen a legfrissebb
-    % dolgozati abrak ujrageneralasahoz.
-    if mode == "energy_only" || mode == "combined"
-        result.compareResult.figures.arbitrageEnergyFlowFigures = ...
-            plot_arbitrage_energy_flow_figures( ...
-                result.compareResult.tableAll, ...
-                cfg, ...
-                result.compareResult.outputFolder);
+function data = local_load_mode_data(cfg, mode, opts)
 
-        compareResult = result.compareResult; %#ok<NASGU>
+    couplings = lower(string(opts.couplings));
 
-        save(fullfile(result.compareResult.outputFolder, 'comparison_result.mat'), ...
-            'compareResult', ...
-            '-v7.3');
+    data = struct();
+    data.mode = mode;
+
+    for i = 1:numel(couplings)
+
+        coupling = couplings(i);
+        resultPath = local_find_result_file(cfg, mode, coupling);
+
+        S = load(resultPath);
+
+        if isfield(S, 'configurationDatabase')
+            DB = S.configurationDatabase;
+        elseif isfield(S, 'DB')
+            DB = S.DB;
+        else
+            error('Result file does not contain configurationDatabase or DB: %s', resultPath);
+        end
+
+        T = DB.candidateTable;
+
+        if ~isempty(opts.candidateList)
+            T = local_filter_candidates(T, opts.candidateList);
+        end
+
+        T.coupling = repmat(coupling, height(T), 1);
+
+        item = struct();
+        item.resultPath = resultPath;
+        item.DB = DB;
+        item.candidateTable = T;
+
+        if isfield(DB, 'candidateProfiles')
+            item.candidateProfiles = DB.candidateProfiles;
+        else
+            item.candidateProfiles = struct();
+        end
+
+        data.(char(coupling)) = item;
+    end
+end
+
+
+function resultPath = local_find_result_file(cfg, mode, coupling)
+
+    mode = lower(string(mode));
+    coupling = lower(string(coupling));
+
+    resultRoot = cfg.paths.results;
+
+    if coupling == "dc"
+
+        fileNames = [
+            "results_dc_" + mode + ".mat"
+            "results_dccoupled.mat"
+        ];
+
+    elseif coupling == "ac"
+
+        fileNames = [
+            "results_ac_" + mode + ".mat"
+            "results_accoupled.mat"
+        ];
+
+    else
+        error('Unknown coupling: %s', coupling);
     end
 
-    % ------------------------------------------------------------------
-    % Modspecifikus dolgozati kiertekelesek
-    % ------------------------------------------------------------------
-    if mode == "energy_only"
-        result.thesisEvaluation = run_energy_only_thesis_evaluation(basePath);
-    elseif mode == "combined"
-        result.thesisEvaluation = run_combined_thesis_evaluation(basePath);
+    candidates = strings(0, 1);
+
+    for i = 1:numel(fileNames)
+
+        candidates(end+1, 1) = ...
+            fullfile(resultRoot, char(mode), char(fileNames(i)));
+
+        candidates(end+1, 1) = ...
+            fullfile(resultRoot, char(fileNames(i)));
+    end
+
+    for i = 1:numel(candidates)
+        if isfile(candidates(i))
+            resultPath = candidates(i);
+            return;
+        end
+    end
+
+    error('Missing saved result file for mode=%s, coupling=%s.', mode, coupling);
+end
+
+
+function T = local_filter_candidates(T, candidateList)
+
+    candidateList = candidateList(:);
+
+    if ismember('candidateIndex', T.Properties.VariableNames)
+        T = T(ismember(T.candidateIndex, candidateList), :);
     else
-        result.thesisEvaluation = [];
+        T = T(candidateList, :);
+    end
+end
+
+
+function outputFolder = local_output_folder(cfg, mode, opts)
+
+    if isfield(opts, 'outputFolder') && ~isempty(opts.outputFolder)
+        outputFolder = fullfile(opts.outputFolder, char(mode));
+        return;
+    end
+
+    if isfield(cfg, 'paths') && isfield(cfg.paths, 'figures')
+        outputFolder = fullfile(cfg.paths.figures, 'evaluation', char(mode));
+    else
+        outputFolder = fullfile(cfg.paths.results, 'evaluation_figures', char(mode));
+    end
+end
+
+
+function S = local_set_default(S, fieldName, defaultValue)
+
+    if ~isfield(S, fieldName) || isempty(S.(fieldName))
+        S.(fieldName) = defaultValue;
     end
 end
