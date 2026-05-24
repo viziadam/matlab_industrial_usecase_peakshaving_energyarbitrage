@@ -17,7 +17,7 @@ function cfg = create_configurations(basePath)
 
     cfg.profiling.enabled = true;
 
-    cfg.dispatch.objectiveMode = "hybrid";
+    cfg.dispatch.objectiveMode = "combined";
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
     cfg.dispatch.noBessContract_kW = 700;
