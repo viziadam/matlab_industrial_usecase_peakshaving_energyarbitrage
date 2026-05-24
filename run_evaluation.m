@@ -10,15 +10,10 @@ function evalResult = run_evaluation(mode, opts)
 %   run_evaluation("combined")
 %   run_evaluation("all")
 %
-% Ez a fuggveny:
-%   1) kivalasztja az uzemmodot,
-%   2) betolti a mentett AC/DC eredmenyeket,
-%   3) meghivja az uzemmodhoz tartozo evaluation fajlt,
-%   4) a visszakapott figSpecs alapjan legeneralja az abrakat.
+% Alapertelmezett mentési hely:
+%   thesis_figures/<mode>/
 %
-% Nem futtat szimulaciot.
-% Nem hasznalja a regi plotokat.
-% A plotting logikat az eval_build_figures es eval_plot_axis kezeli.
+% A fajlnevek tovabbra is a figSpecs(f).name alapjan jonnek letre.
 
     if nargin < 1 || strlength(string(mode)) == 0
         mode = "combined";
@@ -86,7 +81,7 @@ function result = local_run_single_mode(basePath, mode, opts)
             [figSpecs, data] = evaluation_combined(data, cfg, opts);
     end
 
-    outputFolder = local_output_folder(cfg, mode, opts);
+    outputFolder = local_output_folder(basePath, mode, opts);
 
     plotOpts = opts;
     plotOpts.outputFolder = outputFolder;
@@ -211,18 +206,14 @@ function T = local_filter_candidates(T, candidateList)
 end
 
 
-function outputFolder = local_output_folder(cfg, mode, opts)
+function outputFolder = local_output_folder(basePath, mode, opts)
 
     if isfield(opts, 'outputFolder') && ~isempty(opts.outputFolder)
         outputFolder = fullfile(opts.outputFolder, char(mode));
         return;
     end
 
-    if isfield(cfg, 'paths') && isfield(cfg.paths, 'figures')
-        outputFolder = fullfile(cfg.paths.figures, 'evaluation', char(mode));
-    else
-        outputFolder = fullfile(cfg.paths.results, 'evaluation_figures', char(mode));
-    end
+    outputFolder = fullfile(basePath, 'thesis_figures', char(mode));
 end
 
 

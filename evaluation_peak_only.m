@@ -3,8 +3,8 @@ function [figSpecs, data] = evaluation_peak_only(data, cfg, opts)
 %
 % Peak only uzemmodhoz tartozo dolgozati kiertekeles.
 %
-% Itt csak a peak shavinghez kapcsolodo figure-ok vannak megadva.
-% A plotting logikat nem itt kell kezelni.
+% Csak a create_configurations.m alapjan letezo mentett mezoket,
+% illetve azokbol itt szarmaztatott mezoket hasznal.
 
     data = local_add_peak_only_derived_columns(data);
 
@@ -86,38 +86,29 @@ function [figSpecs, data] = evaluation_peak_only(data, cfg, opts)
     figSpecs(2).plots(1).ylabel = "Cost [million HUF]";
     figSpecs(2).plots(1).legend = "best";
 
-    figSpecs(2).plots(2).type = "signed_stacked_bar";
+    figSpecs(2).plots(2).type = "grouped_bar";
     figSpecs(2).plots(2).x = "BESS_PV_ratio";
-    figSpecs(2).plots(2).y = [
-        "contractCostSaving_MHUF"
-        "overrunCostSaving_MHUF"
-        "degradationCost_MHUF"
-    ];
-    figSpecs(2).plots(2).signs = [1 1 -1];
-    figSpecs(2).plots(2).labels = [
-        "Contract saving"
-        "Overrun saving"
-        "Degradation cost"
-    ];
-    figSpecs(2).plots(2).title = "Peak shaving value components";
+    figSpecs(2).plots(2).y = "objectiveCost_MHUF";
+    figSpecs(2).plots(2).title = "Objective cost";
     figSpecs(2).plots(2).xlabel = "BESS/PV ratio [kWh/kWp]";
-    figSpecs(2).plots(2).ylabel = "Value [million HUF]";
-    figSpecs(2).plots(2).zeroLine = true;
+    figSpecs(2).plots(2).ylabel = "Cost [million HUF]";
     figSpecs(2).plots(2).legend = "best";
+    figSpecs(2).plots(2).values = true;
+    figSpecs(2).plots(2).valueFmt = "%.1f";
 
     figSpecs(2).plots(3).type = "line";
     figSpecs(2).plots(3).x = "BESS_PV_ratio";
     figSpecs(2).plots(3).y = [
-        "finalSoH"
+        "finalSoH_pct"
         "equivalentCycles"
     ];
     figSpecs(2).plots(3).labels = [
-        "Final SoH"
+        "Final SoH [%]"
         "Equivalent cycles"
     ];
     figSpecs(2).plots(3).title = "Battery aging indicators";
     figSpecs(2).plots(3).xlabel = "BESS/PV ratio [kWh/kWp]";
-    figSpecs(2).plots(3).ylabel = "Value [-]";
+    figSpecs(2).plots(3).ylabel = "Value";
     figSpecs(2).plots(3).legend = "best";
 
     figSpecs(2).plots(4).type = "heatmap";
@@ -147,31 +138,11 @@ function data = local_add_peak_only_derived_columns(data)
 
         T = data.(char(coupling)).candidateTable;
 
-        T = local_add_mhuf(T, "objectiveCost_HUF", "objectiveCost_MHUF");
-        T = local_add_mhuf(T, "contractCost_HUF", "contractCost_MHUF");
-        T = local_add_mhuf(T, "overrunCost_HUF", "overrunCost_MHUF");
-        T = local_add_mhuf(T, "degradationCost_HUF", "degradationCost_MHUF");
-        T = local_add_mhuf(T, "contractCostSaving_HUF", "contractCostSaving_MHUF");
-        T = local_add_mhuf(T, "overrunCostSaving_HUF", "overrunCostSaving_MHUF");
-
-        if ismember('maxGridImportNoBessPeak_kW', T.Properties.VariableNames) && ...
-           ismember('maxGridImportPeak_kW', T.Properties.VariableNames)
-
-            T.peakReduction_kW = ...
-                T.maxGridImportNoBessPeak_kW - T.maxGridImportPeak_kW;
-
-            T.peakReduction_pct = ...
-                100 * T.peakReduction_kW ./ T.maxGridImportNoBessPeak_kW;
-        end
+        T.objectiveCost_MHUF = T.objectiveCost_HUF / 1e6;
+        T.contractCost_MHUF = T.contractCost_HUF / 1e6;
+        T.overrunCost_MHUF = T.overrunCost_HUF / 1e6;
+        T.degradationCost_MHUF = T.degradationCost_HUF / 1e6;
 
         data.(char(coupling)).candidateTable = T;
-    end
-end
-
-
-function T = local_add_mhuf(T, sourceName, targetName)
-
-    if ismember(sourceName, T.Properties.VariableNames)
-        T.(targetName) = T.(sourceName) / 1e6;
     end
 end

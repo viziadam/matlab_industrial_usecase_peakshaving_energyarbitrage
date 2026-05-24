@@ -5,8 +5,8 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
 %
 % Combined = peak shaving + energy arbitrage.
 %
-% Itt csak az abrak szerkezete es tartalma van megadva.
-% A plotting logikat az eval_build_figures es eval_plot_axis kezeli.
+% Csak a create_configurations.m alapjan letezo mentett mezoket,
+% illetve azokbol itt szarmaztatott mezoket hasznal.
 
     data = local_add_combined_derived_columns(data);
 
@@ -58,16 +58,16 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     figSpecs(1).plots(4).type = "line";
     figSpecs(1).plots(4).x = "BESS_PV_ratio";
     figSpecs(1).plots(4).y = [
-        "finalSoH"
+        "finalSoH_pct"
         "equivalentCycles"
     ];
     figSpecs(1).plots(4).labels = [
-        "Final SoH"
+        "Final SoH [%]"
         "Equivalent cycles"
     ];
     figSpecs(1).plots(4).title = "Battery aging indicators";
     figSpecs(1).plots(4).xlabel = "BESS/PV ratio [kWh/kWp]";
-    figSpecs(1).plots(4).ylabel = "Value [-]";
+    figSpecs(1).plots(4).ylabel = "Value";
     figSpecs(1).plots(4).legend = "best";
 
     % =====================================================================
@@ -101,15 +101,11 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     figSpecs(2).plots(2).x = "BESS_PV_ratio";
     figSpecs(2).plots(2).y = [
         "energyCostSaving_MHUF"
-        "contractCostSaving_MHUF"
-        "overrunCostSaving_MHUF"
         "degradationCost_MHUF"
     ];
-    figSpecs(2).plots(2).signs = [1 1 1 -1];
+    figSpecs(2).plots(2).signs = [1 -1];
     figSpecs(2).plots(2).labels = [
         "Energy saving"
-        "Contract saving"
-        "Overrun saving"
         "Degradation cost"
     ];
     figSpecs(2).plots(2).lineY = "objectiveCost_MHUF";
@@ -168,12 +164,12 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     figSpecs(3).plots(2).y = [
         "pvToLoad_MWh"
         "pvToBess_MWh"
-        "pvCurtailment_MWh"
+        "curtailment_MWh"
     ];
     figSpecs(3).plots(2).labels = [
         "PV to load"
         "PV to BESS"
-        "PV curtailment"
+        "Curtailment"
     ];
     figSpecs(3).plots(2).title = "PV energy distribution";
     figSpecs(3).plots(2).xlabel = "BESS/PV ratio [kWh/kWp]";
@@ -223,70 +219,41 @@ function data = local_add_combined_derived_columns(data)
 
         T = data.(char(coupling)).candidateTable;
 
-        T = local_add_mwh(T, "gridImport_kWh", "gridImport_MWh");
-        T = local_add_mwh(T, "gridImportNoBess_kWh", "gridImportNoBess_MWh");
-        T = local_add_mwh(T, "gridToBess_kWh", "gridToBess_MWh");
-        T = local_add_mwh(T, "pvToBess_kWh", "pvToBess_MWh");
-        T = local_add_mwh(T, "pvToLoad_kWh", "pvToLoad_MWh");
-        T = local_add_mwh(T, "pvCurtailment_kWh", "pvCurtailment_MWh");
-        T = local_add_mwh(T, "bessStoredActual_kWh", "bessStoredActual_MWh");
-        T = local_add_mwh(T, "bessChargeLoss_kWh", "bessChargeLoss_MWh");
+        T.gridImport_MWh = T.gridImport_kWh / 1000;
+        T.gridImportNoBess_MWh = T.gridImportNoBess_kWh / 1000;
 
-        T = local_add_mhuf(T, "objectiveCost_HUF", "objectiveCost_MHUF");
-        T = local_add_mhuf(T, "energyCost_HUF", "energyCost_MHUF");
-        T = local_add_mhuf(T, "contractCost_HUF", "contractCost_MHUF");
-        T = local_add_mhuf(T, "overrunCost_HUF", "overrunCost_MHUF");
-        T = local_add_mhuf(T, "degradationCost_HUF", "degradationCost_MHUF");
-        T = local_add_mhuf(T, "energyCostSaving_HUF", "energyCostSaving_MHUF");
-        T = local_add_mhuf(T, "contractCostSaving_HUF", "contractCostSaving_MHUF");
-        T = local_add_mhuf(T, "overrunCostSaving_HUF", "overrunCostSaving_MHUF");
+        T.gridToBess_MWh = T.gridToBess_kWh / 1000;
+        T.gridToBessStored_MWh = T.gridToBessStored_kWh / 1000;
+        T.gridToBessLoss_MWh = T.gridToBessLoss_kWh / 1000;
 
-        if ismember('gridImportNoBess_MWh', T.Properties.VariableNames) && ...
-           ismember('gridImport_MWh', T.Properties.VariableNames)
+        T.pvToBess_MWh = T.pvToBess_kWh / 1000;
+        T.pvToBessStored_MWh = T.pvToBessStored_kWh / 1000;
+        T.pvToBessLoss_MWh = T.pvToBessLoss_kWh / 1000;
 
-            T.gridImportReduction_MWh = ...
-                T.gridImportNoBess_MWh - T.gridImport_MWh;
+        T.pvToLoad_MWh = T.pvToLoad_kWh / 1000;
+        T.bessToLoad_MWh = T.bessToLoad_kWh / 1000;
+        T.curtailment_MWh = T.curtailment_kWh / 1000;
 
-            T.gridImportReduction_pct = ...
-                100 * T.gridImportReduction_MWh ./ T.gridImportNoBess_MWh;
-        end
+        T.bessChargeLoss_MWh = ...
+            T.gridToBessLoss_MWh + T.pvToBessLoss_MWh;
 
-        if ismember('maxGridImportNoBessPeak_kW', T.Properties.VariableNames) && ...
-           ismember('maxGridImportPeak_kW', T.Properties.VariableNames)
+        T.bessStoredActual_MWh = ...
+            T.gridToBessStored_MWh + T.pvToBessStored_MWh;
 
-            T.peakReduction_kW = ...
-                T.maxGridImportNoBessPeak_kW - T.maxGridImportPeak_kW;
+        T.objectiveCost_MHUF = T.objectiveCost_HUF / 1e6;
+        T.energyCost_MHUF = T.energyCost_HUF / 1e6;
+        T.contractCost_MHUF = T.contractCost_HUF / 1e6;
+        T.overrunCost_MHUF = T.overrunCost_HUF / 1e6;
+        T.degradationCost_MHUF = T.degradationCost_HUF / 1e6;
+        T.energyCostSaving_MHUF = T.energyCostSaving_HUF / 1e6;
 
-            T.peakReduction_pct = ...
-                100 * T.peakReduction_kW ./ T.maxGridImportNoBessPeak_kW;
-        end
+        T.gridImportReduction_MWh = T.gridImportReduction_kWh / 1000;
 
-        if ismember('pvToLoad_MWh', T.Properties.VariableNames) && ...
-           ismember('pvToBess_MWh', T.Properties.VariableNames) && ...
-           ismember('pvCurtailment_MWh', T.Properties.VariableNames)
+        pvUsed_MWh = T.pvToLoad_MWh + T.pvToBess_MWh;
+        pvTotal_MWh = pvUsed_MWh + T.curtailment_MWh;
 
-            pvUsed_MWh = T.pvToLoad_MWh + T.pvToBess_MWh;
-            pvTotal_MWh = pvUsed_MWh + T.pvCurtailment_MWh;
-
-            T.selfConsumption_pct = 100 * pvUsed_MWh ./ pvTotal_MWh;
-        end
+        T.selfConsumption_pct = 100 * pvUsed_MWh ./ pvTotal_MWh;
 
         data.(char(coupling)).candidateTable = T;
-    end
-end
-
-
-function T = local_add_mwh(T, sourceName, targetName)
-
-    if ismember(sourceName, T.Properties.VariableNames)
-        T.(targetName) = T.(sourceName) / 1000;
-    end
-end
-
-
-function T = local_add_mhuf(T, sourceName, targetName)
-
-    if ismember(sourceName, T.Properties.VariableNames)
-        T.(targetName) = T.(sourceName) / 1e6;
     end
 end
