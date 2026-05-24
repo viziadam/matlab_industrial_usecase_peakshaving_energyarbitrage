@@ -215,6 +215,15 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
         dispatch_cfg.objectiveMode = cfg.dispatch.objectiveMode;
         dispatch_cfg.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
 
+        dispatch_cfg = struct();
+        dispatch_cfg.bessCoupling = cfg.system.bessCoupling;
+        dispatch_cfg.objectiveMode = cfg.dispatch.objectiveMode;
+        dispatch_cfg.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
+
+        dispatch_cfg.useFastDayAheadMILP = cfg.dispatch.useFastDayAheadMILP;
+        % dispatch_cfg.fastMilpSimultaneousPowerTolerance_kW = ...
+        %         cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW;
+
         profile.dataPrep_s = profile.dataPrep_s + toc(tStage);
 
         % -----------------------------------------------------------------

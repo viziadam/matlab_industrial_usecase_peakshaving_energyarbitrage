@@ -21,6 +21,9 @@ function cfg = create_configurations(basePath)
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
     cfg.dispatch.noBessContract_kW = 700;
+    %Alternative milp control logic with faster operation
+    cfg.dispatch.useFastDayAheadMILP = true;
+    cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = 1e-5;
 
     cfg.grid.allowExport = true;
     cfg.targetStepMin = 15;
