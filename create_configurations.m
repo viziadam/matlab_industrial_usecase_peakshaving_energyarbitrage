@@ -22,8 +22,9 @@ function cfg = create_configurations(basePath)
     
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
     cfg.dispatch.noBessContract_kW = 700;
+    cfg.dispatch.energyOnlyGridCap_kW = 1000;
     %Alternative milp control logic with faster operation
-    cfg.dispatch.useFastDayAheadMILP = true;
+    cfg.dispatch.useFastDayAheadMILP = false;
     cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = 1e-5;
 
     cfg.grid.allowExport = true;
@@ -190,7 +191,7 @@ function cfg = create_configurations(basePath)
     cfg.diagnostics = struct();
     cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
-    cfg.diagnostics.candidateIndex = 5;
+    cfg.diagnostics.candidateIndex = 3;
 
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;
