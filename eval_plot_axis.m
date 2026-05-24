@@ -1,27 +1,16 @@
 function eval_plot_axis(ax, data, ps, opts)
 % EVAL_PLOT_AXIS
-% One subplot renderer used by eval_build_figures.
+% Dynamic subplot renderer used by eval_build_figures.
 %
 % Supported ps.type:
-%   line
-%   multi_line
-%   grouped_bar
-%   stacked_bar
-%   stacked_bar_line
-%   signed_stacked_bar
-%   signed_stacked_bar_line
-%   area
-%   scatter
-%   heatmap
-%   profile_line
-%   profile_heatmap
+%   line, multi_line, grouped_bar, stacked_bar, stacked_bar_line,
+%   signed_stacked_bar, signed_stacked_bar_line, area, scatter,
+%   heatmap, profile_line, profile_heatmap
 %
 % Main idea:
-%   You only describe what to plot in ps. This function handles the plot.
+%   The user describes WHAT to plot. This function handles HOW to plot it.
 
-    if nargin < 4 || isempty(opts)
-        opts = struct();
-    end
+    if nargin < 4 || isempty(opts), opts = struct(); end
 
     opts = setdef(opts, 'couplings', ["dc", "ac"]);
     ps = setdef(ps, 'x', "BESS_PV_ratio");
@@ -30,11 +19,14 @@ function eval_plot_axis(ax, data, ps, opts)
     ps = setdef(ps, 'title', "");
     ps = setdef(ps, 'xlabel', string(ps.x));
     ps = setdef(ps, 'ylabel', "");
+    ps = setdef(ps, 'rightylabel', "");
     ps = setdef(ps, 'legend', "best");
     ps = setdef(ps, 'grid', true);
     ps = setdef(ps, 'values', false);
+    ps = setdef(ps, 'lineValues', false);
     ps = setdef(ps, 'valueFmt', "%.2f");
     ps = setdef(ps, 'zeroLine', false);
+    ps = setdef(ps, 'rightAxis', false);
 
     hold(ax, 'on');
     if ps.grid, grid(ax, 'on'); end
@@ -53,29 +45,37 @@ function eval_plot_axis(ax, data, ps, opts)
         case "signed_stacked_bar_line"
             plot_stacked_bar(ax, data, ps, opts, true, true);
         case "area"
-            plot_area(ax, data, ps, opts);
+            plot_area(ax, data, ps);
         case "scatter"
             plot_scatter(ax, data, ps, opts);
         case "heatmap"
-            plot_heatmap(ax, data, ps, opts);
+            plot_heatmap(ax, data, ps);
         case "profile_line"
-            plot_profile_line(ax, data, ps, opts);
+            plot_profile_line(ax, data, ps);
         case "profile_heatmap"
-            plot_profile_heatmap(ax, data, ps, opts);
+            plot_profile_heatmap(ax, data, ps);
         otherwise
             error('Unknown plot type: %s', string(ps.type));
     end
 
     if ps.zeroLine
+        yyaxis(ax, 'left');
         yline(ax, 0, '--', 'HandleVisibility', 'off');
     end
 
+    yyaxis(ax, 'left');
     title(ax, string(ps.title));
     xlabel(ax, string(ps.xlabel));
     ylabel(ax, string(ps.ylabel));
 
+    if ps.rightAxis && strlength(string(ps.rightylabel)) > 0
+        yyaxis(ax, 'right');
+        ylabel(ax, string(ps.rightylabel));
+        yyaxis(ax, 'left');
+    end
+
     if ~isfield(ps, 'hideLegend') || ~ps.hideLegend
-        legend(ax, 'Location', char(ps.legend));
+        legend(ax, 'Location', char(ps.legend), 'Interpreter', 'none');
     end
 
     hold(ax, 'off');
@@ -87,7 +87,7 @@ function plot_lines(ax, data, ps, opts)
     labels = get_labels(ps, yFields);
 
     for c = 1:numel(couplings)
-        T = getT(data, couplings(c));
+        T = sortrows(getT(data, couplings(c)), char(ps.x));
         x = T.(char(ps.x));
         for j = 1:numel(yFields)
             y = T.(char(yFields(j))) .* ps.scale;
@@ -109,9 +109,7 @@ function plot_grouped_bar(ax, data, ps, opts)
     end
 
     b = bar(ax, x, Y, 'grouped');
-    for c = 1:numel(couplings)
-        b(c).DisplayName = upper(couplings(c));
-    end
+    for c = 1:numel(couplings), b(c).DisplayName = upper(couplings(c)); end
     set_xt(ax, x);
     if ps.values, add_group_values(ax, x, Y, ps.valueFmt); end
 end
@@ -131,6 +129,8 @@ function plot_stacked_bar(ax, data, ps, opts, withLine, signedMode)
         signs = ones(1, numel(yFields));
     end
 
+    yyaxis(ax, 'left');
+
     for c = 1:numel(couplings)
         T = getT(data, couplings(c));
         Y = nan(numel(x), numel(yFields));
@@ -138,35 +138,40 @@ function plot_stacked_bar(ax, data, ps, opts, withLine, signedMode)
             Y(:, j) = signs(j) .* yonx(T, ps.x, yFields(j), x) .* ps.scale;
         end
         b = bar(ax, x + offs(c), Y, bw, 'stacked');
-        for j = 1:numel(b)
-            b(j).DisplayName = sprintf('%s - %s', upper(couplings(c)), labels(j));
-        end
+        for j = 1:numel(b), b(j).DisplayName = sprintf('%s - %s', upper(couplings(c)), labels(j)); end
         if ps.values, add_stack_values(ax, x + offs(c), Y, ps.valueFmt); end
     end
 
     if withLine && isfield(ps, 'lineY')
         lineFields = string(ps.lineY);
         lineLabels = get_line_labels(ps, lineFields);
+
+        if ps.rightAxis, yyaxis(ax, 'right'); else, yyaxis(ax, 'left'); end
+        hold(ax, 'on');
+
         for c = 1:numel(couplings)
             T = getT(data, couplings(c));
             for j = 1:numel(lineFields)
                 y = yonx(T, ps.x, lineFields(j), x) .* ps.lineScale;
                 nm = sprintf('%s - %s', upper(couplings(c)), lineLabels(j));
                 plot(ax, x, y, '-o', 'LineWidth', 2, 'DisplayName', nm);
-                if isfield(ps, 'lineValues') && ps.lineValues, add_values(ax, x, y, ps.valueFmt); end
+                if ps.lineValues, add_values(ax, x, y, ps.valueFmt); end
             end
         end
+
+        yyaxis(ax, 'left');
     end
+
     set_xt(ax, x);
 end
 
-function plot_area(ax, data, ps, opts)
-    T = getT(data, string(ps.coupling));
+function plot_area(ax, data, ps)
+    T = sortrows(getT(data, string(ps.coupling)), char(ps.x));
     x = T.(char(ps.x));
     Y = T{:, cellstr(string(ps.y))} .* ps.scale;
-    area(ax, x, Y, 'DisplayName', 'area');
+    h = area(ax, x, Y);
     labels = get_labels(ps, string(ps.y));
-    legend(ax, labels, 'Location', char(ps.legend));
+    for i = 1:numel(h), h(i).DisplayName = labels(i); end
 end
 
 function plot_scatter(ax, data, ps, opts)
@@ -179,7 +184,7 @@ function plot_scatter(ax, data, ps, opts)
     end
 end
 
-function plot_heatmap(ax, data, ps, opts)
+function plot_heatmap(ax, data, ps)
     T = getT(data, string(ps.coupling));
     x = T.(char(ps.x));
     y = T.(char(ps.y));
@@ -191,7 +196,7 @@ function plot_heatmap(ax, data, ps, opts)
     if isfield(ps, 'colorLabel'), cb = colorbar(ax); ylabel(cb, string(ps.colorLabel)); end
 end
 
-function plot_profile_line(ax, data, ps, opts)
+function plot_profile_line(ax, data, ps)
     item = data.(char(string(ps.coupling)));
     P = item.candidateProfiles.(char(ps.profile));
     idx = ps.row;
@@ -199,7 +204,7 @@ function plot_profile_line(ax, data, ps, opts)
     plot(ax, x, P(idx, :) .* ps.scale, 'LineWidth', 1.5, 'DisplayName', string(ps.profile));
 end
 
-function plot_profile_heatmap(ax, data, ps, opts)
+function plot_profile_heatmap(ax, data, ps)
     item = data.(char(string(ps.coupling)));
     P = item.candidateProfiles.(char(ps.profile)) .* ps.scale;
     imagesc(ax, P); axis(ax, 'xy'); colorbar(ax);
@@ -208,7 +213,6 @@ end
 function T = getT(data, coupling)
     data = unwrap_data(data);
     T = data.(char(coupling)).candidateTable;
-    T = sortrows(T, T.Properties.VariableNames{strcmp(T.Properties.VariableNames, 'BESS_PV_ratio')});
 end
 
 function data = unwrap_data(data)
@@ -222,20 +226,19 @@ function couplings = get_couplings(data, opts)
     else
         names = string(fieldnames(data));
         keep = false(size(names));
-        for i = 1:numel(names)
-            keep(i) = isfield(data.(char(names(i))), 'candidateTable');
-        end
+        for i = 1:numel(names), keep(i) = isfield(data.(char(names(i))), 'candidateTable'); end
         couplings = names(keep);
     end
 end
 
 function x = refx(data, couplings, xField)
-    T = getT(data, couplings(1));
+    T = sortrows(getT(data, couplings(1)), char(xField));
     x = T.(char(xField));
     x = x(:);
 end
 
 function y = yonx(T, xField, yField, xRef)
+    T = sortrows(T, char(xField));
     x = T.(char(xField));
     raw = T.(char(yField));
     [xu, ia] = unique(x, 'stable');
