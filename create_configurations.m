@@ -17,7 +17,7 @@ function cfg = create_configurations(basePath)
 
     cfg.profiling.enabled = true;
 
-    cfg.dispatch.objectiveMode = "energy_only";
+    cfg.dispatch.objectiveMode = "hybrid";
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
     cfg.dispatch.noBessContract_kW = 700;
@@ -187,7 +187,7 @@ function cfg = create_configurations(basePath)
     % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-    cfg.diagnostics.enabled = false;
+    cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
     cfg.diagnostics.candidateIndex = 5;
 
