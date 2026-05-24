@@ -190,6 +190,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
             day_detail.final_day.load = dc.P_load_actual;
             day_detail.final_day.pv = dc.P_pv_dc_actual;
             day_detail.final_day.price = dc.Prices_today;
+            day_detail.final_day.soc_start = pars.SoC_initial;
             day_detail.final_day.soc_start_dc = pars.SoC_initial_dc;
             day_detail.final_day.soc_start_ac = pars.SoC_initial_ac;
             day_detail.final_day.dayVectors = dayVectors;
