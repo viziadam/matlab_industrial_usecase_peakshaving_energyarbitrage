@@ -27,6 +27,9 @@ function cfg = create_configurations(basePath)
     cfg.dispatch.useFastDayAheadMILP = false;
     cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = 1e-5;
 
+    cfg.dispatch.plannerEtaSohGain = 0.50;
+    cfg.dispatch.plannerEtaMinFactor = 0.90;
+
 
     cfg.grid.allowExport = true;
     cfg.targetStepMin = 15;
@@ -118,8 +121,9 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     % 6) BESS candidate space
     % =====================================================================
-    % cfg.candidates.BESS_PV_ratio_vec = 0:0.5:6;
-    cfg.candidates.BESS_PV_ratio_vec = [0 1 2 3];
+    cfg.candidates.BESS_PV_ratio_vec = 0:0.5:3;
+    cfg.candidates.hybrid.BESS_PV_ratio_vec = 0.5:0.5:1.5;
+    % cfg.candidates.BESS_PV_ratio_vec = [0 1 2 3];
     cfg.candidates.bessDuration_h = 2;
 
     cfg.candidates.designFields = { ...

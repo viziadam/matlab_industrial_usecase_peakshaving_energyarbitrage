@@ -211,6 +211,12 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
         pars.SoC_initial = state_bess.cell_state.SOC;
 
+        pars_planner = local_apply_planner_degradation_single( ...
+            pars, ...
+            state_bess.cell_state.Deg.SOH, ...
+            cfg.dispatch.plannerEtaSohGain, ...
+            cfg.dispatch.plannerEtaMinFactor);
+
         dispatch_cfg = struct();
         dispatch_cfg.bessCoupling = cfg.system.bessCoupling;
         dispatch_cfg.objectiveMode = cfg.dispatch.objectiveMode;
@@ -236,7 +242,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
             dc.P_load_48h, ...
             dc.P_pv_48h, ...
             dc.Prices_48h, ...
-            pars, ...
+            pars_planner, ...
             tariff, ...
             dc.dt_h, ...
             contract_state, ...
@@ -710,4 +716,28 @@ end
 
 function month_id = local_get_month_id_from_abs_day_4y(abs_day)
     month_id = floor((abs_day - 1) / 30) + 1;
+end
+
+function pars_planner = local_apply_planner_degradation_single( ...
+    pars, soh_now, etaSohGain, etaMinFactor)
+
+    soh_now = min(max(soh_now, 0), 1);
+
+    eta_factor = 1 - etaSohGain * (1 - soh_now);
+    eta_factor = max(etaMinFactor, eta_factor);
+
+    pars_planner = pars;
+
+    pars_planner.E_cap_nom_actual = pars.E_cap_nom * soh_now;
+    pars_planner.E_cap_nom = pars_planner.E_cap_nom_actual;
+
+    pars_planner.planner_soh_used = soh_now;
+    pars_planner.planner_eta_factor = eta_factor;
+
+    pars_planner.eta_c = pars.eta_c * eta_factor;
+    pars_planner.eta_d = pars.eta_d * eta_factor;
+    pars_planner.eta_cell = pars.eta_cell * eta_factor;
+
+    pars_planner.dcdc_eta_nom = pars.dcdc_eta_nom * eta_factor;
+    pars_planner.pcs_eta_nom = pars.pcs_eta_nom * eta_factor;
 end

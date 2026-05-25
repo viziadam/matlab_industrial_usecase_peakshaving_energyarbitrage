@@ -62,7 +62,7 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
     search_cfg.dispatch.objectiveMode = "combined";
     search_cfg.dispatch.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
     search_cfg.dispatch.useFastDayAheadMILP = local_get_bool_field(cfg.dispatch, 'useFastDayAheadMILP', false);
-    search_cfg.E_cap_factor = 0.90;
+    search_cfg.E_cap_factor = cfg.contractSearch.E_cap_factor;
 
     if isfield(cfg.dispatch, 'fastMilpSimultaneousPowerTolerance_kW')
         search_cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW;

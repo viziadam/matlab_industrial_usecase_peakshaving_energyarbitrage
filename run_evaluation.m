@@ -23,7 +23,13 @@ function evalResult = run_evaluation(mode, opts)
         opts = struct();
     end
 
-    opts = local_set_default(opts, 'couplings', ["dc", "ac"]);
+    modePreview = lower(string(mode));
+
+    if modePreview == "hybrid"
+        opts = local_set_default(opts, 'couplings', "hybrid");
+    else
+        opts = local_set_default(opts, 'couplings', ["dc", "ac"]);
+    end
     opts = local_set_default(opts, 'candidateList', []);
     opts = local_set_default(opts, 'save', true);
     opts = local_set_default(opts, 'close', false);
@@ -33,7 +39,7 @@ function evalResult = run_evaluation(mode, opts)
     basePath = fileparts(mfilename('fullpath'));
 
     if mode == "all"
-        modesToRun = ["energy_only", "peak_only", "combined"];
+        modesToRun = ["energy_only", "peak_only", "combined", "hybrid"];
     else
         modesToRun = mode;
     end
@@ -58,14 +64,20 @@ end
 
 function result = local_run_single_mode(basePath, mode, opts)
 
-    allowedModes = ["energy_only", "peak_only", "combined"];
+    allowedModes = ["energy_only", "peak_only", "combined", "hybrid"];
 
     if ~any(mode == allowedModes)
         error('Invalid evaluation mode: %s', mode);
     end
 
     cfg = create_configurations(basePath);
-    cfg.dispatch.objectiveMode = mode;
+
+    if mode == "hybrid"
+        cfg.dispatch.objectiveMode = "combined";
+        opts.couplings = "hybrid";
+    else
+        cfg.dispatch.objectiveMode = mode;
+    end
 
     data = local_load_mode_data(cfg, mode, opts);
 
@@ -79,6 +91,9 @@ function result = local_run_single_mode(basePath, mode, opts)
 
         case "combined"
             [figSpecs, data] = evaluation_combined(data, cfg, opts);
+        
+        case "hybrid"
+            [figSpecs, data] = evaluation_hybrid(data, cfg, opts);
     end
 
     outputFolder = local_output_folder(basePath, mode, opts);
@@ -151,6 +166,38 @@ function resultPath = local_find_result_file(cfg, mode, coupling)
 
     mode = lower(string(mode));
     coupling = lower(string(coupling));
+
+    if mode == "hybrid"
+
+        if coupling ~= "hybrid"
+            error('Hybrid evaluation requires coupling = hybrid.');
+        end
+
+        fileNames = [
+            "results_hybrid_combined.mat"
+            "results_hybrid.mat"
+        ];
+
+        candidates = strings(0, 1);
+
+        for i = 1:numel(fileNames)
+
+            candidates(end+1, 1) = ...
+                fullfile(resultRoot, 'combined', char(fileNames(i)));
+
+            candidates(end+1, 1) = ...
+                fullfile(resultRoot, char(fileNames(i)));
+        end
+
+        for i = 1:numel(candidates)
+            if isfile(candidates(i))
+                resultPath = candidates(i);
+                return;
+            end
+        end
+
+        error('Missing saved hybrid result file. Expected results/combined/results_hybrid_combined.mat.');
+    end
 
     resultRoot = cfg.paths.results;
 

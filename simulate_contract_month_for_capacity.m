@@ -257,12 +257,8 @@ function [plan_full, plan_today, dayRes, state_bess] = local_run_dispatch_day( .
 
     dispatch_cfg = struct();
     dispatch_cfg.bessCoupling = coupling;
-
-    if isfield(pars, 'objectiveMode')
-        dispatch_cfg.objectiveMode = pars.objectiveMode;
-    else
-        dispatch_cfg.objectiveMode = "combined";
-    end
+    dispatch_cfg.objectiveMode = "combined";
+    dispatch_cfg.useFastDayAheadMILP = search_cfg.dispatch.useFastDayAheadMILP;
 
     if isfield(pars, 'energyOnlyGridCap_kW')
         dispatch_cfg.energyOnlyGridCap_kW = pars.energyOnlyGridCap_kW;

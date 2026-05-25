@@ -830,10 +830,21 @@ function plot_heatmap(ax, data, ps)
     imagesc(ax, xu, yu, Z);
     axis(ax, 'xy');
 
+    xticks(ax, xu);
+    yticks(ax, yu);
+
+    xlabel(ax, string(ps.xlabel), 'Interpreter', 'none');
+    ylabel(ax, string(ps.ylabel), 'Interpreter', 'none');
+    title(ax, string(ps.title), 'Interpreter', 'none');
+
     cb = colorbar(ax);
 
     if isfield(ps, 'colorLabel') && ~isempty(ps.colorLabel)
         ylabel(cb, string(ps.colorLabel), 'Interpreter', 'none');
+    end
+
+    if isfield(ps, 'nanColor') && ~isempty(ps.nanColor)
+        ax.Color = ps.nanColor;
     end
 end
 

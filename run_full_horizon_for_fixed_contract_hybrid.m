@@ -95,6 +95,12 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
         pars.SoC_initial = ((pars.SoC_initial_dc * pars.dc.E_cap_nom) + ...
             (pars.SoC_initial_ac * pars.ac.E_cap_nom)) / max(pars.E_cap_nom, eps);
 
+        pars_planner = local_apply_planner_degradation_hybrid( ...
+            pars, ...
+            state_hybrid, ...
+            cfg.dispatch.plannerEtaSohGain, ...
+            cfg.dispatch.plannerEtaMinFactor);
+
         contract_state = struct();
         contract_state.P_contract_kW = contract_kW;
         contract_state.P_month_max_so_far_kW = current_month_peak;
@@ -114,7 +120,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
 
         tStage = tic;
         plan_full = call_day_ahead_planner_by_mode( ...
-            dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, pars, tariff, ...
+            dc.P_load_48h, dc.P_pv_48h, dc.Prices_48h, pars_planner, tariff, ...
             dc.dt_h, contract_state, cfg.targetStepMin, dispatch_cfg);
         profile.milp_s = profile.milp_s + toc(tStage);
 
@@ -389,4 +395,38 @@ function profile = local_empty_profile()
     profile.aggregation_s = 0;
     profile.dayLoopTotal_s = 0;
     profile.total_s = 0;
+end
+
+function pars_planner = local_apply_planner_degradation_hybrid( ...
+    pars, state_hybrid, etaSohGain, etaMinFactor)
+
+    soh_dc = min(max(state_hybrid.dc.cell_state.Deg.SOH, 0), 1);
+    soh_ac = min(max(state_hybrid.ac.cell_state.Deg.SOH, 0), 1);
+
+    eta_factor_dc = 1 - etaSohGain * (1 - soh_dc);
+    eta_factor_ac = 1 - etaSohGain * (1 - soh_ac);
+
+    eta_factor_dc = max(etaMinFactor, eta_factor_dc);
+    eta_factor_ac = max(etaMinFactor, eta_factor_ac);
+
+    pars_planner = pars;
+
+    pars_planner.dc.E_cap_nom_actual = pars.dc.E_cap_nom * soh_dc;
+    pars_planner.ac.E_cap_nom_actual = pars.ac.E_cap_nom * soh_ac;
+
+    pars_planner.dc.E_cap_nom = pars_planner.dc.E_cap_nom_actual;
+    pars_planner.ac.E_cap_nom = pars_planner.ac.E_cap_nom_actual;
+    pars_planner.E_cap_nom = pars_planner.dc.E_cap_nom + pars_planner.ac.E_cap_nom;
+
+    pars_planner.dc.planner_soh_used = soh_dc;
+    pars_planner.ac.planner_soh_used = soh_ac;
+
+    pars_planner.dc.planner_eta_factor = eta_factor_dc;
+    pars_planner.ac.planner_eta_factor = eta_factor_ac;
+
+    pars_planner.dc.eta_cell = pars.dc.eta_cell * eta_factor_dc;
+    pars_planner.ac.eta_cell = pars.ac.eta_cell * eta_factor_ac;
+
+    pars_planner.dcdc_eta_nom = pars.dcdc_eta_nom * eta_factor_dc;
+    pars_planner.pcs_eta_nom = pars.pcs_eta_nom * eta_factor_ac;
 end

@@ -772,3 +772,4 @@ function tf = local_is_hybrid_coupling(cfg)
 
     tf = lower(string(cfg.system.bessCoupling)) == "hybrid";
 end
+

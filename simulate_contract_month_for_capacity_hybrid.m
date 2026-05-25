@@ -36,6 +36,10 @@ function result = simulate_contract_month_for_capacity_hybrid( ...
 
     pars.dc.E_cap_nom = pack_info_dc.E_installed_kWh;
     pars.ac.E_cap_nom = pack_info_ac.E_installed_kWh;
+
+    pars.dc.SoC_technical_min = pack_info_dc.SoC_technical_min;
+    pars.ac.SoC_technical_min = pack_info_ac.SoC_technical_min;
+
     pars.E_cap_nom = pars.dc.E_cap_nom + pars.ac.E_cap_nom;
     pars.P_contract_safety_factor = contract_safety_factor;
 
@@ -128,7 +132,11 @@ function result = simulate_contract_month_for_capacity_hybrid( ...
                 dc.dt_h);
 
         catch ME
-            result = local_infeasible_contract_month_result(contract_kW, month_day_indices, day_cache, nDays, ME.message);
+            fprintf('Hybrid contract search failed at contract %.0f kW: %s\n', ...
+            contract_kW, ME.message);
+
+            result = local_infeasible_contract_month_result( ...
+                contract_kW, month_day_indices, day_cache, nDays, ME.message);
             return;
         end
 

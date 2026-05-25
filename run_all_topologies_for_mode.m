@@ -45,8 +45,8 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     overviewResult = plot_industrial_case_overview(cfgBase, industrialCtxForOverview); %#ok<NASGU>
 
     if objectiveMode == "combined"
-        % couplings = ["dc", "ac", "hybrid"];
-        couplings = [ "hybrid"];
+        couplings = ["dc", "ac", "hybrid"];
+        % couplings = [ "hybrid"];
     else
         couplings = ["dc", "ac"];
     end
@@ -66,7 +66,6 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
         cfg.dispatch.objectiveMode = objectiveMode;
 
         if coupling == "hybrid"
-            cfg.candidates.hybrid.BESS_PV_ratio_vec = [0.8 1.0 1.5 2.0];
             cfg.candidates.designFields = { ...
                 'BESS_PV_ratio', ...
                 'BESS_PV_ratio_dc', ...
