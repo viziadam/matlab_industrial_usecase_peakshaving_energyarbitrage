@@ -24,7 +24,7 @@ function cfg = create_configurations(basePath)
     cfg.dispatch.noBessContract_kW = 700;
     cfg.dispatch.energyOnlyGridCap_kW = 1000;
     %Alternative milp control logic with faster operation
-    cfg.dispatch.useFastDayAheadMILP = false;
+    cfg.dispatch.useFastDayAheadMILP = true;
     cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = 1e-5;
 
     cfg.dispatch.plannerEtaSohGain = 0.50;
@@ -196,7 +196,7 @@ function cfg = create_configurations(basePath)
     % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-    cfg.diagnostics.enabled = true;
+    cfg.diagnostics.enabled = false;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
     cfg.diagnostics.candidateIndex = 3;
 

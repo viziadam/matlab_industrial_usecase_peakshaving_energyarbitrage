@@ -296,5 +296,6 @@ function search_cfg = local_build_contract_search_cfg(search_cfg_in, cfg)
 
     search_cfg.dispatch.objectiveMode = cfg.dispatch.objectiveMode;
     search_cfg.dispatch.energyOnlyGridCap_kW = cfg.dispatch.energyOnlyGridCap_kW;
+    search_cfg.dispatch.useFastDayAheadMILP = cfg.dispatch.useFastDayAheadMILP;
     search_cfg.E_cap_factor = cfg.contractSearch.E_cap_factor;
 end
