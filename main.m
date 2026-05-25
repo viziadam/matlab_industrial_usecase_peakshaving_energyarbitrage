@@ -40,12 +40,20 @@ function runResult = main()
         objectiveMode, ...
         diagnosticCandidateIndex);
 
-    fprintf('\nIndustrial PV+BESS AC/DC simulation finished.\n');
+    fprintf('\nIndustrial PV+BESS simulation finished.\n');
     fprintf('Objective mode: %s\n', objectiveMode);
 
     if isempty(diagnosticCandidateIndex)
-        fprintf('Run type: full sweep. AC/DC comparison was created.\n');
+        if objectiveMode == "combined"
+            fprintf('Run type: full sweep. DC, AC and hybrid results were created.\n');
+        else
+            fprintf('Run type: full sweep. DC and AC results were created.\n');
+        end
     else
-        fprintf('Run type: diagnostic. Selected candidates were simulated for AC and DC.\n');
+        if objectiveMode == "combined"
+            fprintf('Run type: diagnostic. Selected candidates were simulated for DC, AC and hybrid.\n');
+        else
+            fprintf('Run type: diagnostic. Selected candidates were simulated for DC and AC.\n');
+        end
     end
 end

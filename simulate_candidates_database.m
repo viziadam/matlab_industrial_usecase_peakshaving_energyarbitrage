@@ -147,8 +147,18 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
                 DB.diagnostics.(fieldName).detail = detail;
 
                 if isfield(cfgRun.diagnostics, 'makeDispatchDiagnosticPlots') && cfgRun.diagnostics.makeDispatchDiagnosticPlots
+
+                    % Csak a kiválasztott diagnosztikai ábrák maradnak:
+                    %   - teljes 4 éves futás összesítő
+                    %   - napi részletes ábrák
+                    %   - planner execution debug
+                    %
+                    % A canonical energy-flow extra ábrákat diagnosztikai
+                    % módban nem kérjük külön, mert a napi részletes ábrák
+                    % már tartalmazzák a releváns energiaáramokat.
                     local_plot_embedded_dispatch_diagnostics(cfgRun, c, design, simSummary, detail);
-                    local_plot_canonical_energy_flow_diagnostics(cfgRun, c, simSummary);
+
+                    % local_plot_canonical_energy_flow_diagnostics(cfgRun, c, simSummary);
                 end
             end
 

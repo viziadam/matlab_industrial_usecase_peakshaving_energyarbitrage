@@ -63,19 +63,43 @@ function local_plot_embedded_dispatch_diagnostics(cfg, candidateIndex, design, s
 
     figBefore = double(findall(0, 'Type', 'figure'));
 
-    if local_has_contract_search_history(simSummary.search_result)
-        plot_contract_search_summary_4y(simSummary.search_result);
-    else
-        if isfield(simSummary.search_result, 'mode')
-            fprintf('Contract search summary plot skipped. Mode: %s\n', string(simSummary.search_result.mode));
-        else
-            fprintf('Contract search summary plot skipped.\n');
-        end
-    end
+    % ---------------------------------------------------------------------
+    % Diagnosztikai módban csak ezek maradnak:
+    %   1) Teljes 4 éves futás összesítő
+    %   2) Napi részletes ábrák
+    %   3) Planner execution debug
+    %
+    % A contract search summary és egyéb kiegészítő ábrák itt szándékosan
+    % ki vannak kapcsolva.
+    % ---------------------------------------------------------------------
+
+    % if local_has_contract_search_history(simSummary.search_result)
+    %     plot_contract_search_summary_4y(simSummary.search_result);
+    % end
 
     plot_full_horizon_summary_4y(full_result, simSummary.bestContract_kW);
-    plot_final_day_detail_4y(full_result, simSummary.pars);
-    plot_selected_day_details_4y(full_result, simSummary.pars);
+
+    % ---------------------------------------------------------------------
+    % Diagnosztikai modban csak ezek maradnak:
+    %   1) Teljes 4 eves futas osszesito
+    %   2) Napi reszletes abrak
+    %   3) Planner execution debug
+    %
+    % Contract search summary szandekosan kikapcsolva.
+    % ---------------------------------------------------------------------
+
+    % if local_has_contract_search_history(simSummary.search_result)
+    %     plot_contract_search_summary_4y(simSummary.search_result);
+    % end
+
+    plot_full_horizon_summary_4y(full_result, simSummary.bestContract_kW);
+
+    if local_is_hybrid_coupling(cfg)
+        plot_hybrid_daily_energy_flow_diagnostics(full_result, simSummary.pars, cfg);
+    else
+        %plot_final_day_detail_4y(full_result, simSummary.pars);
+        plot_selected_day_details_4y(full_result, simSummary.pars);
+    end
 
     if isfield(cfg.diagnostics, 'makePlannerExecutionDebugPlot') && ...
        cfg.diagnostics.makePlannerExecutionDebugPlot
@@ -731,14 +755,20 @@ function v = local_vec(x, n)
 end
 
 
-function tf = local_has_contract_search_history(search_result)
+function tf = local_is_hybrid_coupling(cfg)
+% LOCAL_IS_HYBRID_COUPLING
+% A hybrid megjelenitest kizárólag a konfiguráció alapján kapcsoljuk.
+% Nem BESS-méretből és nem eredménymezőkből következtetünk.
 
-    tf = ...
-        isstruct(search_result) && ...
-        isfield(search_result, 'proxy_history') && ...
-        isstruct(search_result.proxy_history) && ...
-        isfield(search_result.proxy_history, 'history') && ...
-        ~isempty(search_result.proxy_history.history) && ...
-        isfield(search_result, 'validation_results') && ...
-        ~isempty(search_result.validation_results);
+    tf = false;
+
+    if ~isfield(cfg, 'system')
+        return;
+    end
+
+    if ~isfield(cfg.system, 'bessCoupling')
+        return;
+    end
+
+    tf = lower(string(cfg.system.bessCoupling)) == "hybrid";
 end
