@@ -41,6 +41,8 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
 
     pars.dc.E_cap_nom = pack_info_dc.E_installed_kWh;
     pars.ac.E_cap_nom = pack_info_ac.E_installed_kWh;
+    pars.dc.SoC_technical_min = pack_info_dc.SoC_technical_min;
+    pars.ac.SoC_technical_min = pack_info_ac.SoC_technical_min;
     pars.E_cap_nom = pars.dc.E_cap_nom + pars.ac.E_cap_nom;
     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
 

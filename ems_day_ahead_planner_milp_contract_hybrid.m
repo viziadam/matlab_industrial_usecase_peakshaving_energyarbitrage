@@ -26,6 +26,11 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     buy = Prices.buy_huf(:);
     N = numel(Pload);
 
+    SoC_technical_min_dc = pars.dc.SoC_technical_min;
+    SoC_technical_min_ac = pars.ac.SoC_technical_min;
+
+    SoC_technical_min = SoC_technical_min_dc;
+
     if numel(Ppv) ~= N || numel(buy) ~= N
         error('HYBRID MILP bemeneti vektorhossz elteres.');
     end
@@ -63,11 +68,13 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     iPbDcL    = n + (1:N); n = n + N;
     iPbAcL    = n + (1:N); n = n + N;
     iPspill   = n + (1:N); n = n + N;
-    iSocDc    = n + (1:N); n = n + N;
-    iSocAc    = n + (1:N); n = n + N;
-    iModeDc   = n + (1:N); n = n + N;
-    iModeAc   = n + (1:N); n = n + N;
-    iModeInv  = n + (1:N); n = n + N;
+    iSocDc          = n + (1:N); n = n + N;
+    iSocAc          = n + (1:N); n = n + N;
+    iSocRecoveryDeficitDc  = n + (1:N); n = n + N;
+    iSocRecoveryDeficitAc  = n + (1:N); n = n + N;
+    iModeDc         = n + (1:N); n = n + N;
+    iModeAc         = n + (1:N); n = n + N;
+    iModeInv        = n + (1:N); n = n + N;
     nVars = n;
 
     f = zeros(nVars, 1);
@@ -78,6 +85,13 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     f(iPpvBac) = cChAc * etaPcs * dt_h;
     f(iPbDcL) = cDisDc * (1 / max(etaDcdc * etaInv, eps)) * dt_h;
     f(iPbAcL) = cDisAc * (1 / etaPcs) * dt_h;
+    
+    socRecoveryPenalty_HUF_per_kWh = 1e7;
+    f(iSocRecoveryDeficitDc) = ...
+        socRecoveryPenalty_HUF_per_kWh * pars.dc.E_cap_nom;
+
+    f(iSocRecoveryDeficitAc) = ...
+        socRecoveryPenalty_HUF_per_kWh * pars.ac.E_cap_nom;
 
     AeqLoad = sparse(N, nVars);
     beqLoad = Pload;
@@ -187,12 +201,36 @@ function plan = ems_day_ahead_planner_milp_contract_hybrid( ...
     A = [A; AModeAc];
     b = [b; bModeAc];
 
+    ASocRecovery = sparse(2 * N, nVars);
+    bSocRecovery = -SoC_technical_min * ones(2 * N, 1);
+
+    for t = 1:N
+        ASocRecovery(t, iSocDc(t)) = -1;
+        ASocRecovery(t, iSocRecoveryDeficitDc(t)) = -1;
+
+        ASocRecovery(N + t, iSocAc(t)) = -1;
+        ASocRecovery(N + t, iSocRecoveryDeficitAc(t)) = -1;
+    end
+
+    A = [A; ASocRecovery];
+    b = [b; bSocRecovery];
+
     lb = zeros(nVars, 1);
     ub = inf(nVars, 1);
+
     lb(iSocDc) = pars.dc.SoC_min;
     ub(iSocDc) = pars.dc.SoC_max;
+
     lb(iSocAc) = pars.ac.SoC_min;
     ub(iSocAc) = pars.ac.SoC_max;
+
+    lb(iSocRecoveryDeficitDc) = 0;
+    ub(iSocRecoveryDeficitDc) = SoC_technical_min_dc - pars.dc.SoC_min;
+
+    lb(iSocRecoveryDeficitAc) = 0;
+    ub(iSocRecoveryDeficitAc) = SoC_technical_min_ac - pars.ac.SoC_min;
+
+
     ub(iModeDc) = 1;
     ub(iModeAc) = 1;
     ub(iModeInv) = 1;

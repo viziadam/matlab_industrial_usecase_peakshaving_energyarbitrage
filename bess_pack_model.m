@@ -10,6 +10,7 @@ function [pack_out, pack_state] = bess_pack_model(P_pack_req, mode, pack_params,
         CELL_AH    = 280;
         CELL_V_NOM = 3.2;
         CELL_KWH   = (CELL_AH * CELL_V_NOM) / 1000; % ~0.896 kWh
+        SoC_technical_min = 0.25;
         
         % --- 2. Soros cellák száma (Ns) kiválasztása (Kereskedelmi standardok) ---
         % A teljesítményigény határozza meg a feszültségszintet a valóságban is
@@ -48,7 +49,7 @@ function [pack_out, pack_state] = bess_pack_model(P_pack_req, mode, pack_params,
         pack_out = struct('Ns', Ns, 'Np', Np, ...
                          'V_nominal_pack', V_nominal_pack, ...
                          'E_installed_kWh', E_installed_kWh, ...
-                         'Total_cells', Ns * Np);
+                         'Total_cells', Ns * Np, 'SoC_technical_min', SoC_technical_min);
         return;
 
     elseif strcmp(mode, 'run')

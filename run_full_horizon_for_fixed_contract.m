@@ -104,6 +104,7 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
     pars.E_cap_nom = pack_info.E_installed_kWh;
     pars.P_contract_safety_factor = cfg.dispatch.P_contract_safety_factor;
+    pars.SoC_technical_min = pack_info.SoC_technical_min;
 
     profile.init_s = toc(tStage);
 

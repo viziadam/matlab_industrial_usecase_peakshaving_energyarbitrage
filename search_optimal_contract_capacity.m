@@ -17,7 +17,38 @@ function search_result = search_optimal_contract_capacity( ...
     month_selection = select_representative_contract_month(day_cache);
     month_day_indices = month_selection.day_indices;
 
+    manual_extra_abs_days = 2156:2160;
+
+    extra_day_indices = find(ismember([day_cache.abs_day], manual_extra_abs_days));
+
+    month_day_indices = unique([ ...
+        month_day_indices(:); ...
+        extra_day_indices(:)], 'stable');
+
     isHybrid = local_is_hybrid(search_cfg);
+
+    pars_search = pars;
+
+    if isHybrid
+        pars_search.dc.E_cap_nom_original = pars.dc.E_cap_nom;
+        pars_search.ac.E_cap_nom_original = pars.ac.E_cap_nom;
+
+        pars_search.dc.E_cap_nom = pars.dc.E_cap_nom * search_cfg.E_cap_factor;
+        pars_search.ac.E_cap_nom = pars.ac.E_cap_nom * search_cfg.E_cap_factor;
+    
+        pars_search.dc.C_chg_abs_max = pars_search.dc.P_chg_max / max(pars_search.dc.E_cap_nom, eps);
+        pars_search.dc.C_dis_abs_max = pars_search.dc.C_chg_abs_max;
+
+        pars_search.ac.C_chg_abs_max = pars_search.ac.P_chg_max / max(pars_search.ac.E_cap_nom, eps);
+        pars_search.ac.C_dis_abs_max = pars_search.ac.C_chg_abs_max;
+    else
+        pars_search.E_cap_nom_original = pars.E_cap_nom;
+
+        pars_search.E_cap_nom = pars.E_cap_nom * search_cfg.E_cap_factor;
+
+        pars_search.C_chg_abs_max = pars_search.P_chg_max / max(pars_search.E_cap_nom, eps);
+        pars_search.C_dis_abs_max = pars_search.C_chg_abs_max;
+    end
 
     if verbose
         fprintf('\n=== CONTRACT SEARCH ON REPRESENTATIVE MONTH ===\n');
@@ -34,7 +65,7 @@ function search_result = search_optimal_contract_capacity( ...
         isHybrid, ...
         day_cache, ...
         month_day_indices, ...
-        pars, ...
+        pars_search, ...
         tariff, ...
         contract_candidate_kW, ...
         search_cfg, ...
@@ -61,7 +92,7 @@ function search_result = search_optimal_contract_capacity( ...
         isHybrid, ...
         day_cache, ...
         month_day_indices, ...
-        pars, ...
+        pars_search, ...
         tariff, ...
         best_contract_kW, ...
         search_cfg, ...
@@ -123,9 +154,19 @@ function search_log = local_contract_search_interval_halving( ...
 % LOCAL_CONTRACT_SEARCH_INTERVAL_HALVING
 % Egyszeru intervallumfelezes cache-elt koltsegkiertekelessel.
 
-    history = struct('contract_kW', {}, 'total_cost_huf', {}, 'stage', {});
+    history = struct( ...
+    'contract_kW', {}, ...
+    'total_cost_huf', {}, ...
+    'energy_import_cost_huf', {}, ...
+    'overrun_cost_huf', {}, ...
+    'contract_cost_huf', {}, ...
+    'stage', {});
+
     evaluated_contracts = [];
     evaluated_costs = [];
+    evaluated_energy_import_costs = [];
+    evaluated_overrun_costs = [];
+    evaluated_contract_costs = [];
 
     function J = eval_cached(contract_kW, stage_name)
 
@@ -136,8 +177,14 @@ function search_log = local_contract_search_interval_halving( ...
         if ~isempty(idx)
             J = evaluated_costs(idx);
 
+            J_E = evaluated_energy_import_costs(idx);
+            J_O = evaluated_overrun_costs(idx);
+            J_T = evaluated_contract_costs(idx);
+
             if verbose
-                fprintf('  Cache: %.0f kW -> %.2f HUF\n', contract_kW, J);
+                fprintf(['  Cache: %.0f kW -> %.2f HUF ', ...
+                    '| E: %.2f HUF | O: %.2f HUF | T: %.2f HUF\n'], ...
+                    contract_kW, J, J_E, J_O, J_T);
             end
 
             return;
@@ -149,20 +196,58 @@ function search_log = local_contract_search_interval_halving( ...
 
         t0 = tic;
         out = cost_fun(contract_kW);
-        J = out.total_cost_period_huf;
         runtime_s = toc(t0);
 
+        J = out.total_cost_period_huf;
+
+        % -----------------------------------------------------------------
+        % Actual topology-based cost components
+        % -----------------------------------------------------------------
+        % E: imported energy cost
+        % O: overrun cost
+        % T: contracted power cost
+        % These values come from the monthly simulation result, not from the
+        % internal MILP objective.
+        % -----------------------------------------------------------------
+
+        if isfield(out, 'energy_cost_period_huf')
+            J_E = out.energy_cost_period_huf;
+        else
+            J_E = NaN;
+        end
+
+        if isfield(out, 'overrun_cost_period_huf')
+            J_O = out.overrun_cost_period_huf;
+        else
+            J_O = NaN;
+        end
+
+        if isfield(out, 'contract_cost_period_huf')
+            J_T = out.contract_cost_period_huf;
+        else
+            J_T = NaN;
+        end
+
         if verbose
-            fprintf('%.2f HUF | %.2f s\n', J, runtime_s);
+            fprintf(['%.2f HUF | E: %.2f HUF | O: %.2f HUF | T: %.2f HUF ', ...
+                '| %.2f s\n'], ...
+                J, J_E, J_O, J_T, runtime_s);
         end
 
         evaluated_contracts(end + 1) = contract_kW; %#ok<AGROW>
         evaluated_costs(end + 1) = J; %#ok<AGROW>
+        evaluated_energy_import_costs(end + 1) = J_E; %#ok<AGROW>
+        evaluated_overrun_costs(end + 1) = J_O; %#ok<AGROW>
+        evaluated_contract_costs(end + 1) = J_T; %#ok<AGROW>
 
         row = struct();
         row.contract_kW = contract_kW;
         row.total_cost_huf = J;
+        row.energy_import_cost_huf = J_E;
+        row.overrun_cost_huf = J_O;
+        row.contract_cost_huf = J_T;
         row.stage = char(stage_name);
+
         history(end + 1) = row; %#ok<AGROW>
     end
 

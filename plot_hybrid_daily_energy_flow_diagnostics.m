@@ -647,65 +647,7 @@ function maxRepPlots = local_get_max_representative_plots(full_result, cfg)
     end
 end
 
-function v = local_plan(plan, fieldName, n, defaultValue)
 
-    if isfield(plan, fieldName)
-        v = plan.(fieldName)(:);
-    else
-        v = defaultValue * ones(n, 1);
-    end
-
-    v = local_fit(v, n, fieldName);
-end
-
-
-function v = local_power(res, powerField, energyField, n, dt_h, defaultValue)
-
-    if ~isempty(powerField) && isfield(res, powerField)
-        v = res.(powerField)(:);
-    elseif ~isempty(energyField) && isfield(res, energyField)
-        v = res.(energyField)(:) ./ max(dt_h, eps);
-    else
-        v = defaultValue * ones(n, 1);
-    end
-
-    v = local_fit(v, n, powerField);
-end
-
-
-function v = local_power_or_plan(res, plan, powerField, planField, n, defaultValue)
-
-    if isfield(res, powerField)
-        v = res.(powerField)(:);
-    elseif isfield(plan, planField)
-        v = plan.(planField)(:);
-    else
-        v = defaultValue * ones(n, 1);
-    end
-
-    v = local_fit(v, n, powerField);
-end
-
-
-function v = local_fit(v, n, name)
-
-    v = v(:);
-
-    if numel(v) ~= n
-        error('Hybrid diagnostic vector length mismatch for %s. Expected %d, got %d.', ...
-            name, n, numel(v));
-    end
-end
-
-
-function value = local_meta(S, fieldName, defaultValue)
-
-    if isstruct(S) && isfield(S, fieldName)
-        value = S.(fieldName);
-    else
-        value = defaultValue;
-    end
-end
 
 
 function value = local_scalar_plan(plan, fieldName, defaultValue)

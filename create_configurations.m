@@ -27,6 +27,7 @@ function cfg = create_configurations(basePath)
     cfg.dispatch.useFastDayAheadMILP = false;
     cfg.dispatch.fastMilpSimultaneousPowerTolerance_kW = 1e-5;
 
+
     cfg.grid.allowExport = true;
     cfg.targetStepMin = 15;
     cfg.aggregationMethod = "mean";
@@ -140,6 +141,8 @@ function cfg = create_configurations(basePath)
     cfg.contractSearch.min_kW = 400;
     cfg.contractSearch.max_kW = 1200;
 
+    cfg.contractSearch.E_cap_factor = 0.90;
+
     cfg.contractSearch.proxy.n_typical = 5;
     cfg.contractSearch.proxy.n_extreme = 2;
 
@@ -229,7 +232,7 @@ function cfg = create_configurations(basePath)
     % =====================================================================
     cfg.detail = struct();
     cfg.detail.max_representative_plots = 4;
-    cfg.detail.max_overrun_days = 4;
+    cfg.detail.max_overrun_days = 15;
     cfg.detail.overrun_tolerance_kW = 1e-6;
 
     % =====================================================================

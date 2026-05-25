@@ -100,7 +100,10 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     if safety <= 0 || safety > 1
         error('P_contract_safety_factor must be in the interval (0, 1].');
     end
-
+    
+    
+    SoC_technical_min = pars.SoC_technical_min;
+    
     Plimit = safety * Pcontract;
 
     %Ppv = min(Ppvdc * pars.inv_eta, pars.P_inv_limit_ac);
@@ -133,8 +136,9 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     iPpvB   = n + (1:N); n = n + N;
     iPbL    = n + (1:N); n = n + N;
     iPspill = n + (1:N); n = n + N;
-    iSoc    = n + (1:N); n = n + N;
-    iMode   = n + (1:N); n = n + N;
+    iSoc          = n + (1:N); n = n + N;
+    iSocRecoveryDeficit = n + (1:N); n = n + N;
+    iMode         = n + (1:N); n = n + N;
 
     nVars = n;
 
@@ -147,6 +151,10 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     f(iPgB) = buyTotal * dt_h + cCh * pars.inv_eta * dt_h;
     f(iPpvB)  = cCh * dt_h;
     f(iPbL) = cDis * (1 / pars.inv_eta) * dt_h;
+
+    socRecoveryPenalty_HUF_per_kWh = 1e7;
+    f(iSocRecoveryDeficit) = ...
+        socRecoveryPenalty_HUF_per_kWh * pars.E_cap_nom;
 
     % =====================================================================
     % Egyenlosegek
@@ -278,6 +286,17 @@ function plan = ems_day_ahead_planner_milp_contract( ...
     A = [A; A_inv_ac_output];
     b = [b; b_inv_ac_output];
 
+    ASocRecovery = sparse(N, nVars);
+    bSocRecovery = -SoC_technical_min * ones(N, 1);
+
+    for t = 1:N
+        ASocRecovery(t, iSoc(t)) = -1;
+        ASocRecovery(t, iSocRecoveryDeficit(t)) = -1;
+    end
+
+    A = [A; ASocRecovery];
+    b = [b; bSocRecovery];
+
     % =====================================================================
     % Korlatok
     % =====================================================================
@@ -286,6 +305,12 @@ function plan = ems_day_ahead_planner_milp_contract( ...
 
     lb(iSoc) = pars.SoC_min;
     ub(iSoc) = pars.SoC_max;
+
+    % lb(iSoc) = SoC_technical_min;
+    % ub(iSoc) = pars.SoC_max;
+    
+    lb(iSocRecoveryDeficit) = 0;
+    ub(iSocRecoveryDeficit) = SoC_technical_min - pars.SoC_min;
 
     lb(iMode) = 0;
     ub(iMode) = 1;

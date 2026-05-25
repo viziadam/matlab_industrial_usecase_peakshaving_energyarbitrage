@@ -46,7 +46,6 @@ function [out, state] = lfp_cell(P_req_cell, mode, params, dt_h, state)
         state.Deg = deg_model_init( ...
             E_cap_nom, ...
             must(params, 'cap_floor_frac', 0.8));
-
         out = struct();
         return;
     end

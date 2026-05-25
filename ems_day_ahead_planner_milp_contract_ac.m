@@ -99,6 +99,8 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
         error('P_contract_safety_factor must be in the interval (0, 1].');
     end
 
+    SoC_technical_min = pars.SoC_technical_min;
+
     Plimit = safety * Pcontract;
 
     % Kozponti PV inverter nevleges hatasfoka.
@@ -138,8 +140,9 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     iPpvB   = n + (1:N); n = n + N;
     iPbL    = n + (1:N); n = n + N;
     iPspill = n + (1:N); n = n + N;
-    iSoc    = n + (1:N); n = n + N;
-    iMode   = n + (1:N); n = n + N;
+    iSoc          = n + (1:N); n = n + N;
+    iSocRecoveryDeficit = n + (1:N); n = n + N;
+    iMode         = n + (1:N); n = n + N;
 
     nVars = n;
 
@@ -158,6 +161,10 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     % PbL AC oldali kisütés. A pack oldali kisütési teljesítmény:
     % PbL / etaPcsNom.
     f(iPbL) = cDis * (1 / etaPcsNom) * dt_h;
+
+    socRecoveryPenalty_HUF_per_kWh = 1e7;
+    f(iSocRecoveryDeficit) = ...
+        socRecoveryPenalty_HUF_per_kWh * pars.E_cap_nom;
 
     % =====================================================================
     % Egyenlosegek
@@ -239,6 +246,17 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
     A = [A; AGrid];
     b = [b; bGrid];
 
+    ASocRecovery = sparse(N, nVars);
+    bSocRecovery = -SoC_technical_min * ones(N, 1);
+
+    for t = 1:N
+        ASocRecovery(t, iSoc(t)) = -1;
+        ASocRecovery(t, iSocRecoveryDeficit(t)) = -1;
+    end
+
+    A = [A; ASocRecovery];
+    b = [b; bSocRecovery];
+
     % =====================================================================
     % Korlatok
     % =====================================================================
@@ -247,6 +265,13 @@ function plan = ems_day_ahead_planner_milp_contract_ac( ...
 
     lb(iSoc) = pars.SoC_min;
     ub(iSoc) = pars.SoC_max;
+
+    % lb(iSoc) = SoC_technical_min;
+    % ub(iSoc) = pars.SoC_max;
+    
+    lb(iSocRecoveryDeficit) = 0;
+    ub(iSocRecoveryDeficit) = SoC_technical_min - pars.SoC_min;
+
 
     lb(iMode) = 0;
     ub(iMode) = 1;

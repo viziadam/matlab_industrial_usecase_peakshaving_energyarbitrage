@@ -17,6 +17,8 @@ function plan = ems_day_ahead_planner_milp_contract_fast_dc( ...
         error('Input length mismatch in fast DC planner.');
     end
 
+    SoC_technical_min = pars.SoC_technical_min;
+
     SoC0 = local_get_field(pars, 'SoC_initial', 0.5);
     SoC0 = min(max(SoC0, pars.SoC_min), pars.SoC_max);
 
@@ -49,8 +51,9 @@ function plan = ems_day_ahead_planner_milp_contract_fast_dc( ...
     iPpvB   = n + (1:N); n = n + N;
     iPbL    = n + (1:N); n = n + N;
     iPspill = n + (1:N); n = n + N;
-    iSoc    = n + (1:N); n = n + N;
-    iMode   = n + (1:N); n = n + N;
+    iSoc          = n + (1:N); n = n + N;
+    iSocRecoveryDeficit = n + (1:N); n = n + N;
+    iMode         = n + (1:N); n = n + N;
 
     nVars = n;
 
@@ -60,6 +63,10 @@ function plan = ems_day_ahead_planner_milp_contract_fast_dc( ...
     f(iPgB) = buyTotal * dt_h + cCh * pars.inv_eta * dt_h;
     f(iPpvB) = cCh * dt_h;
     f(iPbL) = cDis * (1 / pars.inv_eta) * dt_h;
+
+    socRecoveryPenalty_HUF_per_kWh = 1e7;
+    f(iSocRecoveryDeficit) = ...
+        socRecoveryPenalty_HUF_per_kWh * pars.E_cap_nom;
 
     AeqLoad = sparse(N, nVars);
     beqLoad = Pload;
@@ -151,11 +158,25 @@ function plan = ems_day_ahead_planner_milp_contract_fast_dc( ...
     A = [A; AInvAcOutput];
     b = [b; bInvAcOutput];
 
+    ASocRecovery = sparse(N, nVars);
+    bSocRecovery = -SoC_technical_min * ones(N, 1);
+
+    for t = 1:N
+        ASocRecovery(t, iSoc(t)) = -1;
+        ASocRecovery(t, iSocRecoveryDeficit(t)) = -1;
+    end
+
+    A = [A; ASocRecovery];
+    b = [b; bSocRecovery];
+
     lb = zeros(nVars, 1);
     ub = inf(nVars, 1);
 
     lb(iSoc) = pars.SoC_min;
     ub(iSoc) = pars.SoC_max;
+
+    lb(iSocRecoveryDeficit) = 0;
+    ub(iSocRecoveryDeficit) = SoC_technical_min - pars.SoC_min;
 
     lb(iMode) = 0;
     ub(iMode) = 1;
