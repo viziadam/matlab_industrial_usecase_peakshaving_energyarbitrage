@@ -25,7 +25,7 @@ function pars = base_battery_pars_nonideal_(E_cap_nom, Pmax)
     pars.eta_c            = 0.98;
     pars.eta_d            = 0.98;
 
-    pars.eta_cell         = 0.985;
+    pars.eta_cell         = 0.945;
     pars.eta_cell_min     = 0.90;
 
     pars.k_eta_C2         = 0.02;

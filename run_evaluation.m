@@ -74,7 +74,7 @@ function result = local_run_single_mode(basePath, mode, opts)
 
     if mode == "hybrid"
         cfg.dispatch.objectiveMode = "combined";
-        opts.couplings = "hybrid";
+        opts.couplings = ["hybrid", "dc", "ac"];
     else
         cfg.dispatch.objectiveMode = mode;
     end
@@ -167,7 +167,9 @@ function resultPath = local_find_result_file(cfg, mode, coupling)
     mode = lower(string(mode));
     coupling = lower(string(coupling));
 
-    if mode == "hybrid"
+    resultRoot = cfg.paths.results;
+
+    if mode == "hybrid" && coupling == "hybrid"
 
         if coupling ~= "hybrid"
             error('Hybrid evaluation requires coupling = hybrid.');
@@ -199,7 +201,11 @@ function resultPath = local_find_result_file(cfg, mode, coupling)
         error('Missing saved hybrid result file. Expected results/combined/results_hybrid_combined.mat.');
     end
 
-    resultRoot = cfg.paths.results;
+    if mode == "hybrid" && coupling ~= "hybrid"
+        mode = "combined";
+    end
+
+    
 
     if coupling == "dc"
 

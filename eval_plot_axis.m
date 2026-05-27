@@ -812,39 +812,143 @@ end
 
 function plot_heatmap(ax, data, ps)
 
+    ps = setdef(ps, 'scale', 1);
+    ps = setdef(ps, 'heatmapStyle', "soft_points");
+    ps = setdef(ps, 'colormapName', "parula");
+    ps = setdef(ps, 'markerSize', 320);
+    ps = setdef(ps, 'showContour', false);
+    ps = setdef(ps, 'contourLevels', 8);
+
     T = getT(data, string(ps.coupling));
 
     x = T.(char(ps.x));
     y = T.(char(ps.y));
     z = T.(char(ps.z)) .* ps.scale;
 
-    [xu, ~, ix] = unique(x);
-    [yu, ~, iy] = unique(y);
+    valid = isfinite(x) & isfinite(y) & isfinite(z);
 
-    Z = nan(numel(yu), numel(xu));
+    x = x(valid);
+    y = y(valid);
+    z = z(valid);
 
-    for i = 1:numel(z)
-        Z(iy(i), ix(i)) = z(i);
+    yyaxis(ax, 'left');
+
+    if isempty(x) || isempty(y) || isempty(z)
+
+        text(ax, 0.5, 0.5, "No finite data to plot", ...
+            'Units', 'normalized', ...
+            'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'middle', ...
+            'FontSize', 11, ...
+            'Interpreter', 'none');
+
+        xlabel(ax, string(ps.xlabel), 'Interpreter', 'none');
+        ylabel(ax, string(ps.ylabel), 'Interpreter', 'none');
+        title(ax, string(ps.title), 'Interpreter', 'none');
+
+        ax.Box = 'on';
+        ax.Color = [0.96 0.96 0.96];
+
+        return;
     end
 
-    imagesc(ax, xu, yu, Z);
-    axis(ax, 'xy');
+    scatter(ax, x, y, ps.markerSize, z, ...
+        's', ...
+        'filled', ...
+        'MarkerEdgeColor', [0.92 0.92 0.92], ...
+        'LineWidth', 0.35, ...
+        'HandleVisibility', 'off');
 
-    xticks(ax, xu);
-    yticks(ax, yu);
+    colormap(ax, local_get_heatmap_colormap(ps));
+
+    cb = colorbar(ax);
+    ylabel(cb, string(ps.colorLabel), 'Interpreter', 'none');
+
+    if ps.showContour && numel(unique(x)) >= 3 && numel(unique(y)) >= 3
+
+        hold(ax, 'on');
+
+        xq = linspace(min(x), max(x), 120);
+        yq = linspace(min(y), max(y), 120);
+        [Xq, Yq] = meshgrid(xq, yq);
+
+        F = scatteredInterpolant(x(:), y(:), z(:), 'natural', 'none');
+        Zq = F(Xq, Yq);
+
+        contour(ax, Xq, Yq, Zq, ps.contourLevels, ...
+            'LineColor', [0.18 0.18 0.18], ...
+            'LineWidth', 0.65, ...
+            'HandleVisibility', 'off');
+
+        hold(ax, 'off');
+    end
 
     xlabel(ax, string(ps.xlabel), 'Interpreter', 'none');
     ylabel(ax, string(ps.ylabel), 'Interpreter', 'none');
     title(ax, string(ps.title), 'Interpreter', 'none');
 
-    cb = colorbar(ax);
+    ax.Box = 'on';
+    ax.Layer = 'top';
+    ax.FontSize = 10;
+    ax.LineWidth = 0.85;
+    ax.Color = [0.96 0.96 0.96];
 
-    if isfield(ps, 'colorLabel') && ~isempty(ps.colorLabel)
-        ylabel(cb, string(ps.colorLabel), 'Interpreter', 'none');
+    grid(ax, 'on');
+    ax.GridAlpha = 0.12;
+    ax.MinorGridAlpha = 0.08;
+
+    xt = unique(x);
+    yt = unique(y);
+
+    xticks(ax, xt);
+    yticks(ax, yt);
+
+    if numel(xt) > 8
+        xticks(ax, xt(1:ceil(numel(xt) / 8):end));
     end
 
-    if isfield(ps, 'nanColor') && ~isempty(ps.nanColor)
-        ax.Color = ps.nanColor;
+    if numel(yt) > 9
+        yticks(ax, yt(1:ceil(numel(yt) / 9):end));
+    end
+
+    ylim(ax, [0 100]);
+
+    xMin = min(x);
+    xMax = max(x);
+
+    if ~isfinite(xMin) || ~isfinite(xMax)
+        return;
+    end
+
+    if abs(xMax - xMin) <= 1e-12
+        xPad = max(0.05 * abs(xMin), 0.1);
+        xlim(ax, [xMin - xPad, xMax + xPad]);
+    else
+        xRange = xMax - xMin;
+        xlim(ax, [xMin - 0.04 * xRange, xMax + 0.04 * xRange]);
+    end
+end
+
+
+function cmap = local_get_heatmap_colormap(ps)
+
+    switch lower(string(ps.colormapName))
+
+        case "turbo"
+
+            if exist('turbo', 'file') == 2 || exist('turbo', 'builtin') == 5
+                cmap = turbo(256);
+            else
+                cmap = parula(256);
+            end
+
+        case "gray"
+
+            cmap = gray(256);
+
+        otherwise
+
+            cmap = parula(256);
     end
 end
 

@@ -45,8 +45,8 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
     overviewResult = plot_industrial_case_overview(cfgBase, industrialCtxForOverview); %#ok<NASGU>
 
     if objectiveMode == "combined"
-        couplings = ["dc", "ac", "hybrid"];
-        % couplings = [ "hybrid"];
+        % couplings = ["dc", "ac", "hybrid"];
+        couplings = [ "ac", "hybrid"];
     else
         couplings = ["dc", "ac"];
     end

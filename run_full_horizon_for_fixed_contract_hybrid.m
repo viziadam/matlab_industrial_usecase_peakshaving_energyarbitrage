@@ -213,10 +213,69 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
 
     finalSoCdc = state_hybrid.dc.cell_state.SOC;
     finalSoCac = state_hybrid.ac.cell_state.SOC;
-    finalSoHdc = state_hybrid.dc.cell_state.Deg.SOH;
-    finalSoHac = state_hybrid.ac.cell_state.Deg.SOH;
-    finalSoC = ((finalSoCdc * pars.dc.E_cap_nom) + (finalSoCac * pars.ac.E_cap_nom)) / max(pars.E_cap_nom, eps);
+    DegDc = state_hybrid.dc.cell_state.Deg;
+    DegAc = state_hybrid.ac.cell_state.Deg;
+
+    finalSoHdc = DegDc.SOH;
+    finalSoHac = DegAc.SOH;
+
+    finalSoC = ((finalSoCdc * pars.dc.E_cap_nom) + ...
+        (finalSoCac * pars.ac.E_cap_nom)) / max(pars.E_cap_nom, eps);
+
     finalSoH = min(finalSoHdc, finalSoHac);
+
+    finalCycleDegradationFDDc = DegDc.sum_cycle;
+    finalCalendarDegradationFDDc = DegDc.sum_cal;
+    finalTotalDegradationFDDc = DegDc.FD;
+
+    finalCycleDegradationFDAc = DegAc.sum_cycle;
+    finalCalendarDegradationFDAc = DegAc.sum_cal;
+    finalTotalDegradationFDAc = DegAc.FD;
+
+    finalCycleDegradationPctDc = ...
+        local_degradation_fd_to_pct( ...
+            finalCycleDegradationFDDc, ...
+            finalTotalDegradationFDDc, ...
+            finalSoHdc);
+
+    finalCalendarDegradationPctDc = ...
+        local_degradation_fd_to_pct( ...
+            finalCalendarDegradationFDDc, ...
+            finalTotalDegradationFDDc, ...
+            finalSoHdc);
+
+    finalCycleDegradationPctAc = ...
+        local_degradation_fd_to_pct( ...
+            finalCycleDegradationFDAc, ...
+            finalTotalDegradationFDAc, ...
+            finalSoHac);
+
+    finalCalendarDegradationPctAc = ...
+        local_degradation_fd_to_pct( ...
+            finalCalendarDegradationFDAc, ...
+            finalTotalDegradationFDAc, ...
+            finalSoHac);
+
+    finalCycleDegradationFD = ...
+        finalCycleDegradationFDDc + finalCycleDegradationFDAc;
+
+    finalCalendarDegradationFD = ...
+        finalCalendarDegradationFDDc + finalCalendarDegradationFDAc;
+
+    finalTotalDegradationFD = ...
+        finalCycleDegradationFD + finalCalendarDegradationFD;
+
+    finalCycleDegradationPct = ...
+        local_degradation_fd_to_pct( ...
+            finalCycleDegradationFD, ...
+            finalTotalDegradationFD, ...
+            finalSoH);
+
+    finalCalendarDegradationPct = ...
+        local_degradation_fd_to_pct( ...
+            finalCalendarDegradationFD, ...
+            finalTotalDegradationFD, ...
+            finalSoH);
 
     profile.total_s = toc(tFull);
 
@@ -240,6 +299,23 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract_hybrid(
     result.finalSoCac = finalSoCac;
     result.finalSoHdc = finalSoHdc;
     result.finalSoHac = finalSoHac;
+    result.finalCycleDegradationFD = finalCycleDegradationFD;
+    result.finalCalendarDegradationFD = finalCalendarDegradationFD;
+    result.finalTotalDegradationFD = finalTotalDegradationFD;
+    result.finalCycleDegradationPct = finalCycleDegradationPct;
+    result.finalCalendarDegradationPct = finalCalendarDegradationPct;
+
+    result.finalCycleDegradationFDDc = finalCycleDegradationFDDc;
+    result.finalCalendarDegradationFDDc = finalCalendarDegradationFDDc;
+    result.finalTotalDegradationFDDc = finalTotalDegradationFDDc;
+    result.finalCycleDegradationPctDc = finalCycleDegradationPctDc;
+    result.finalCalendarDegradationPctDc = finalCalendarDegradationPctDc;
+
+    result.finalCycleDegradationFDAc = finalCycleDegradationFDAc;
+    result.finalCalendarDegradationFDAc = finalCalendarDegradationFDAc;
+    result.finalTotalDegradationFDAc = finalTotalDegradationFDAc;
+    result.finalCycleDegradationPctAc = finalCycleDegradationPctAc;
+    result.finalCalendarDegradationPctAc = finalCalendarDegradationPctAc;
     result.total_cost_period_huf = running.scalar.objectiveCost_HUF;
     result.energy_cost_period_huf = running.scalar.energyCost_HUF;
     result.degradation_cost_period_huf = running.scalar.degradationCost_HUF;
@@ -429,4 +505,16 @@ function pars_planner = local_apply_planner_degradation_hybrid( ...
 
     pars_planner.dcdc_eta_nom = pars.dcdc_eta_nom * eta_factor_dc;
     pars_planner.pcs_eta_nom = pars.pcs_eta_nom * eta_factor_ac;
+end
+
+function degradationPct = local_degradation_fd_to_pct(componentFD, totalFD, finalSoH)
+
+    totalSohLossPct = 100 * max(0, 1 - finalSoH);
+
+    if ~isfinite(componentFD) || ~isfinite(totalFD) || totalFD <= 1e-12
+        degradationPct = 0;
+        return;
+    end
+
+    degradationPct = totalSohLossPct * componentFD / totalFD;
 end

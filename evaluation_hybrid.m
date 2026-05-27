@@ -102,7 +102,7 @@ function [figSpecs, data] = evaluation_hybrid(data, cfg, opts)
     % =====================================================================
 
     figSpecs(3).name = "hybrid_bess_sizing_value_heatmaps";
-    figSpecs(3).layout = [1 2];
+    figSpecs(3).layout = [1 3];
 
     figSpecs(3).plots(1).type = "heatmap";
     figSpecs(3).plots(1).coupling = "hybrid";
@@ -116,13 +116,26 @@ function [figSpecs, data] = evaluation_hybrid(data, cfg, opts)
 
     figSpecs(3).plots(2).type = "heatmap";
     figSpecs(3).plots(2).coupling = "hybrid";
-    figSpecs(3).plots(2).x = "BESS_PV_ratio_dc";
-    figSpecs(3).plots(2).y = "BESS_PV_ratio_ac";
-    figSpecs(3).plots(2).z = "marginalStorageValue_HUF_per_kWh";
-    figSpecs(3).plots(2).title = "BESS kapacitas hatarhaszna";
-    figSpecs(3).plots(2).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(3).plots(2).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(3).plots(2).colorLabel = "HUF/kWh additional";
+    figSpecs(3).plots(2).x = "E_BESS_total_MWh";
+    figSpecs(3).plots(2).y = "bessAcShare_pct";
+    figSpecs(3).plots(2).z = "marginalStorageValueDc_MHUF_per_MWh";
+    figSpecs(3).plots(2).title = "DC BESS kapacitas marginalis haszna";
+    figSpecs(3).plots(2).xlabel = "Teljes BESS kapacitas [MWh]";
+    figSpecs(3).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(3).plots(2).colorLabel = "M HUF/MWh";
+
+    figSpecs(3).plots(3).type = "heatmap";
+    figSpecs(3).plots(3).coupling = "hybrid";
+    figSpecs(3).plots(3).x = "E_BESS_total_MWh";
+    figSpecs(3).plots(3).y = "bessAcShare_pct";
+    figSpecs(3).plots(3).z = "marginalStorageValueAc_MHUF_per_MWh";
+    figSpecs(3).plots(3).title = "AC BESS kapacitas marginalis haszna";
+    figSpecs(3).plots(3).xlabel = "Teljes BESS kapacitas [MWh]";
+    figSpecs(3).plots(3).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(3).plots(3).colorLabel = "M HUF/MWh";
+
+    figSpecs = local_apply_hybrid_total_share_axes(figSpecs);
+    figSpecs = local_apply_hybrid_heatmap_styles(figSpecs);
 end
 
 
@@ -137,11 +150,17 @@ function data = local_prepare_hybrid_columns(data, cfg)
     T = data.hybrid.candidateTable;
 
     T = T(logical(T.wasSimulated) & ~logical(T.hasError), :);
+    T.sourceCoupling = repmat("hybrid", height(T), 1);
 
+    T = local_append_single_coupling_candidates(T, data, "dc");
+    T = local_append_single_coupling_candidates(T, data, "ac");
+    
     local_require_columns(T, { ...
         'BESS_PV_ratio_dc', ...
         'BESS_PV_ratio_ac', ...
         'BESS_PV_ratio_total', ...
+        'E_BESS_dc_kWh', ...
+        'E_BESS_ac_kWh', ...
         'E_BESS_kWh', ...
         'P_BESS_kW', ...
         'energyCost_HUF', ...
@@ -154,9 +173,10 @@ function data = local_prepare_hybrid_columns(data, cfg)
         'finalSoH', ...
         'bessThroughput_kWh'});
 
+    T = local_add_hybrid_axis_columns(T);
     T = local_add_hybrid_basic_economics(T, cfg);
     T = local_add_hybrid_reference_metrics(T, cfg);
-    T = local_add_hybrid_profile_quality_metrics(T, data.hybrid);
+    T = local_add_hybrid_profile_quality_metrics(T, data);
     T = local_add_hybrid_sizing_value_metrics(T);
 
     data.hybrid.candidateTable = T;
@@ -299,28 +319,41 @@ function T = local_add_hybrid_reference_metrics(T, cfg)
 end
 
 
-function T = local_add_hybrid_profile_quality_metrics(T, hybridData)
+function T = local_add_hybrid_profile_quality_metrics(T, data)
 
     T.gridRampReduction_pct = NaN(height(T), 1);
     T.residualLoadVariabilityReduction_pct = NaN(height(T), 1);
 
-    if ~isfield(hybridData, 'candidateProfiles') || isempty(hybridData.candidateProfiles)
-        return;
-    end
-
-    P = hybridData.candidateProfiles;
-
-    if ~isfield(P, 'meanGridImport_kW') || ...
-       ~isfield(P, 'meanGridImportNoBess_kW')
-        return;
-    end
-
     for i = 1:height(T)
+
+        sourceCoupling = string(T.sourceCoupling(i));
+        dataFields = string(fieldnames(data));
+
+        if ~ismember(sourceCoupling, dataFields)
+            continue;
+        end
+
+        item = data.(char(sourceCoupling));
+        itemFields = string(fieldnames(item));
+
+        if ~ismember("candidateProfiles", itemFields)
+            continue;
+        end
+
+        P = item.candidateProfiles;
+        profileFields = string(fieldnames(P));
+
+        if ~ismember("meanGridImport_kW", profileFields) || ...
+           ~ismember("meanGridImportNoBess_kW", profileFields)
+
+            continue;
+        end
 
         rowIdx = i;
 
         if ismember('candidateIndex', T.Properties.VariableNames) && ...
            isfinite(T.candidateIndex(i))
+
             rowIdx = T.candidateIndex(i);
         end
 
@@ -353,12 +386,12 @@ function T = local_add_hybrid_sizing_value_metrics(T)
     T.specificNetValue_HUF_per_kWh = ...
         local_safe_divide_vec(T.netSavingVsZero_HUF, T.E_BESS_kWh);
 
-    T.marginalStorageValue_HUF_per_kWh = NaN(height(T), 1);
+    T.marginalStorageValueDc_HUF_per_kWh = NaN(height(T), 1);
+    T.marginalStorageValueAc_HUF_per_kWh = NaN(height(T), 1);
 
     dcVals = unique(T.BESS_PV_ratio_dc);
     acVals = unique(T.BESS_PV_ratio_ac);
 
-    % Marginal value along DC direction
     for iAc = 1:numel(acVals)
 
         mask = abs(T.BESS_PV_ratio_ac - acVals(iAc)) < 1e-12;
@@ -368,19 +401,15 @@ function T = local_add_hybrid_sizing_value_metrics(T)
             continue;
         end
 
-        [~, ord] = sort(T.BESS_PV_ratio_dc(subIdx));
+        [~, ord] = sort(T.E_BESS_dc_kWh(subIdx));
         subIdx = subIdx(ord);
 
         dValue = [NaN; diff(T.combinedPeriodNPV_HUF(subIdx))];
-        dE = [NaN; diff(T.E_BESS_kWh(subIdx))];
+        dE = [NaN; diff(T.E_BESS_dc_kWh(subIdx))];
 
-        T.marginalStorageValue_HUF_per_kWh(subIdx) = ...
+        T.marginalStorageValueDc_HUF_per_kWh(subIdx) = ...
             dValue ./ max(dE, eps);
     end
-
-    % Marginal value along AC direction.
-    % Ha mindket iranybol van becsles, akkor az atlagot vesszuk.
-    marginalAc = NaN(height(T), 1);
 
     for iDc = 1:numel(dcVals)
 
@@ -391,22 +420,43 @@ function T = local_add_hybrid_sizing_value_metrics(T)
             continue;
         end
 
-        [~, ord] = sort(T.BESS_PV_ratio_ac(subIdx));
+        [~, ord] = sort(T.E_BESS_ac_kWh(subIdx));
         subIdx = subIdx(ord);
 
         dValue = [NaN; diff(T.combinedPeriodNPV_HUF(subIdx))];
-        dE = [NaN; diff(T.E_BESS_kWh(subIdx))];
+        dE = [NaN; diff(T.E_BESS_ac_kWh(subIdx))];
 
-        marginalAc(subIdx) = dValue ./ max(dE, eps);
+        T.marginalStorageValueAc_HUF_per_kWh(subIdx) = ...
+            dValue ./ max(dE, eps);
     end
 
-    both = isfinite(T.marginalStorageValue_HUF_per_kWh) & isfinite(marginalAc);
-    onlyAc = ~isfinite(T.marginalStorageValue_HUF_per_kWh) & isfinite(marginalAc);
+    T.marginalStorageValueDc_MHUF_per_MWh = ...
+        T.marginalStorageValueDc_HUF_per_kWh ./ 1000;
 
-    T.marginalStorageValue_HUF_per_kWh(both) = ...
-        0.5 .* (T.marginalStorageValue_HUF_per_kWh(both) + marginalAc(both));
+    T.marginalStorageValueAc_MHUF_per_MWh = ...
+        T.marginalStorageValueAc_HUF_per_kWh ./ 1000;
 
-    T.marginalStorageValue_HUF_per_kWh(onlyAc) = marginalAc(onlyAc);
+    T.marginalStorageValue_HUF_per_kWh = ...
+        0.5 .* ( ...
+            T.marginalStorageValueDc_HUF_per_kWh + ...
+            T.marginalStorageValueAc_HUF_per_kWh);
+
+    onlyDc = ...
+        isfinite(T.marginalStorageValueDc_HUF_per_kWh) & ...
+        ~isfinite(T.marginalStorageValueAc_HUF_per_kWh);
+
+    onlyAc = ...
+        ~isfinite(T.marginalStorageValueDc_HUF_per_kWh) & ...
+        isfinite(T.marginalStorageValueAc_HUF_per_kWh);
+
+    T.marginalStorageValue_HUF_per_kWh(onlyDc) = ...
+        T.marginalStorageValueDc_HUF_per_kWh(onlyDc);
+
+    T.marginalStorageValue_HUF_per_kWh(onlyAc) = ...
+        T.marginalStorageValueAc_HUF_per_kWh(onlyAc);
+
+    T.marginalStorageValue_MHUF_per_MWh = ...
+        T.marginalStorageValue_HUF_per_kWh ./ 1000;
 end
 
 
@@ -437,4 +487,202 @@ function y = local_safe_divide_vec(a, b)
     y = NaN(size(a));
     mask = isfinite(a) & isfinite(b) & abs(b) > 1e-12;
     y(mask) = a(mask) ./ b(mask);
+end
+
+function T = local_add_hybrid_axis_columns(T)
+
+    T.E_BESS_total_kWh = T.E_BESS_kWh;
+    T.E_BESS_total_MWh = T.E_BESS_total_kWh ./ 1000;
+
+    T.bessAcShare_pct = ...
+        100 .* T.E_BESS_ac_kWh ./ max(T.E_BESS_total_kWh, eps);
+
+    zeroBessMask = abs(T.E_BESS_total_kWh) <= 1e-12;
+    T.bessAcShare_pct(zeroBessMask) = 0;
+
+    T.bessDcShare_pct = 100 - T.bessAcShare_pct;
+end
+
+function figSpecs = local_apply_hybrid_total_share_axes(figSpecs)
+
+    for f = 1:numel(figSpecs)
+
+        for p = 1:numel(figSpecs(f).plots)
+
+            figSpecs(f).plots(p).x = "E_BESS_total_MWh";
+            figSpecs(f).plots(p).y = "bessAcShare_pct";
+
+            figSpecs(f).plots(p).xlabel = ...
+                "Teljes BESS kapacitas [MWh]";
+
+            figSpecs(f).plots(p).ylabel = ...
+                "AC-csatolt BESS reszaranya [%]";
+        end
+    end
+end
+
+
+function figSpecs = local_apply_hybrid_heatmap_styles(figSpecs)
+
+    for p = 1:numel(figSpecs(1).plots)
+
+        figSpecs(1).plots(p).heatmapStyle = "soft_points";
+        figSpecs(1).plots(p).colormapName = "parula";
+        figSpecs(1).plots(p).markerSize = 360;
+        figSpecs(1).plots(p).showContour = false;
+        figSpecs(1).plots(p).hideLegend = true;
+    end
+
+    for p = 1:numel(figSpecs(2).plots)
+
+        figSpecs(2).plots(p).heatmapStyle = "contour_points";
+        figSpecs(2).plots(p).colormapName = "turbo";
+        figSpecs(2).plots(p).markerSize = 300;
+        figSpecs(2).plots(p).showContour = true;
+        figSpecs(2).plots(p).contourLevels = 8;
+        figSpecs(2).plots(p).hideLegend = true;
+    end
+
+    for p = 1:numel(figSpecs(3).plots)
+
+        figSpecs(3).plots(p).heatmapStyle = "contour_points";
+        figSpecs(3).plots(p).colormapName = "parula";
+        figSpecs(3).plots(p).markerSize = 300;
+        figSpecs(3).plots(p).showContour = true;
+        figSpecs(3).plots(p).contourLevels = 8;
+        figSpecs(3).plots(p).hideLegend = true;
+    end
+end
+
+function T = local_append_single_coupling_candidates(T, data, coupling)
+
+    coupling = lower(string(coupling));
+    dataFields = string(fieldnames(data));
+
+    if ~ismember(coupling, dataFields)
+        return;
+    end
+
+    item = data.(char(coupling));
+    itemFields = string(fieldnames(item));
+
+    if ~ismember("candidateTable", itemFields)
+        return;
+    end
+
+    S = item.candidateTable;
+    S = S(logical(S.wasSimulated) & ~logical(S.hasError), :);
+
+    if height(S) == 0
+        return;
+    end
+
+    S = local_convert_single_coupling_to_hybrid_table(S, coupling);
+
+    T = local_append_table_like_reference(T, S);
+end
+
+
+function S = local_convert_single_coupling_to_hybrid_table(S, coupling)
+
+    coupling = lower(string(coupling));
+
+    if ~ismember('BESS_PV_ratio', S.Properties.VariableNames)
+        error('Single coupling table missing BESS_PV_ratio.');
+    end
+
+    if ~ismember('E_BESS_kWh', S.Properties.VariableNames)
+        error('Single coupling table missing E_BESS_kWh.');
+    end
+
+    if ~ismember('P_BESS_kW', S.Properties.VariableNames)
+        error('Single coupling table missing P_BESS_kW.');
+    end
+
+    n = height(S);
+
+    S.sourceCoupling = repmat(coupling, n, 1);
+
+    switch coupling
+
+        case "dc"
+
+            S.BESS_PV_ratio_dc = S.BESS_PV_ratio;
+            S.BESS_PV_ratio_ac = zeros(n, 1);
+            S.BESS_PV_ratio_total = S.BESS_PV_ratio;
+
+            S.E_BESS_dc_kWh = S.E_BESS_kWh;
+            S.E_BESS_ac_kWh = zeros(n, 1);
+
+            S.P_BESS_dc_kW = S.P_BESS_kW;
+            S.P_BESS_ac_kW = zeros(n, 1);
+
+            S.finalSoHDc = S.finalSoH;
+            S.finalSoHAc = NaN(n, 1);
+
+        case "ac"
+
+            S.BESS_PV_ratio_dc = zeros(n, 1);
+            S.BESS_PV_ratio_ac = S.BESS_PV_ratio;
+            S.BESS_PV_ratio_total = S.BESS_PV_ratio;
+
+            S.E_BESS_dc_kWh = zeros(n, 1);
+            S.E_BESS_ac_kWh = S.E_BESS_kWh;
+
+            S.P_BESS_dc_kW = zeros(n, 1);
+            S.P_BESS_ac_kW = S.P_BESS_kW;
+
+            S.finalSoHDc = NaN(n, 1);
+            S.finalSoHAc = S.finalSoH;
+
+        otherwise
+
+            error('Unsupported single coupling mode: %s', coupling);
+    end
+
+    S.isConvertedSingleCoupling = true(n, 1);
+end
+
+
+function T = local_append_table_like_reference(T, S)
+
+    refVars = T.Properties.VariableNames;
+
+    S = local_add_missing_columns_like_reference(S, T);
+    S = S(:, refVars);
+
+    T = [T; S];
+end
+
+
+function S = local_add_missing_columns_like_reference(S, refT)
+
+    refVars = refT.Properties.VariableNames;
+
+    for i = 1:numel(refVars)
+
+        v = refVars{i};
+
+        if ismember(v, S.Properties.VariableNames)
+            continue;
+        end
+
+        refCol = refT.(v);
+
+        if isnumeric(refCol)
+            S.(v) = NaN(height(S), 1);
+
+        elseif islogical(refCol)
+            S.(v) = false(height(S), 1);
+
+        elseif isstring(refCol)
+            S.(v) = strings(height(S), 1);
+
+        elseif iscell(refCol)
+            S.(v) = cell(height(S), 1);
+
+        else
+            S.(v) = NaN(height(S), 1);
+        end
+    end
 end

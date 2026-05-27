@@ -77,13 +77,65 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon_h
     [running, full_result, detail] = run_full_horizon_for_fixed_contract_hybrid(day_cache, pars, tariff, best_contract_kW, running, cfg, cfg.diagnostics.storeCandidateDetail, industrialCtx.detail_cfg);
     fullHorizonRuntime_s = toc(tFull);
 
-    if isfield(running.summary, 'bestContract_kW'); running.summary.bestContract_kW = best_contract_kW; end
-    if isfield(running.summary, 'finalSoC'); running.summary.finalSoC = full_result.finalSoC; end
-    if isfield(running.summary, 'finalSoH'); running.summary.finalSoH = full_result.finalSoH; end
-    if isfield(running.summary, 'finalSoCDc'); running.summary.finalSoCDc = full_result.finalSoCdc; end
-    if isfield(running.summary, 'finalSoCAc'); running.summary.finalSoCAc = full_result.finalSoCac; end
-    if isfield(running.summary, 'finalSoHDc'); running.summary.finalSoHDc = full_result.finalSoHdc; end
-    if isfield(running.summary, 'finalSoHAc'); running.summary.finalSoHAc = full_result.finalSoHac; end
+    running.summary.bestContract_kW = best_contract_kW;
+
+    running.summary.finalSoC = full_result.finalSoC;
+    running.summary.finalSoH = full_result.finalSoH;
+
+    running.summary.finalSoCDc = full_result.finalSoCdc;
+    running.summary.finalSoCAc = full_result.finalSoCac;
+
+    running.summary.finalSoHDc = full_result.finalSoHdc;
+    running.summary.finalSoHAc = full_result.finalSoHac;
+
+    running.summary.finalCycleDegradationFD = ...
+        full_result.finalCycleDegradationFD;
+
+    running.summary.finalCalendarDegradationFD = ...
+        full_result.finalCalendarDegradationFD;
+
+    running.summary.finalTotalDegradationFD = ...
+        full_result.finalTotalDegradationFD;
+
+    running.summary.finalCycleDegradationPct = ...
+        full_result.finalCycleDegradationPct;
+
+    running.summary.finalCalendarDegradationPct = ...
+        full_result.finalCalendarDegradationPct;
+
+    running.summary.finalCycleDegradationFDDc = ...
+        full_result.finalCycleDegradationFDDc;
+
+    running.summary.finalCalendarDegradationFDDc = ...
+        full_result.finalCalendarDegradationFDDc;
+
+    running.summary.finalTotalDegradationFDDc = ...
+        full_result.finalTotalDegradationFDDc;
+
+    running.summary.finalCycleDegradationPctDc = ...
+        full_result.finalCycleDegradationPctDc;
+
+    running.summary.finalCalendarDegradationPctDc = ...
+        full_result.finalCalendarDegradationPctDc;
+
+    running.summary.finalCycleDegradationFDAc = ...
+        full_result.finalCycleDegradationFDAc;
+
+    running.summary.finalCalendarDegradationFDAc = ...
+        full_result.finalCalendarDegradationFDAc;
+
+    running.summary.finalTotalDegradationFDAc = ...
+        full_result.finalTotalDegradationFDAc;
+
+    running.summary.finalCycleDegradationPctAc = ...
+        full_result.finalCycleDegradationPctAc;
+
+    running.summary.finalCalendarDegradationPctAc = ...
+        full_result.finalCalendarDegradationPctAc;
+
+    running.summary.contractSearchRuntime_s = contractSearchRuntime_s;
+    running.summary.fullHorizonRuntime_s = fullHorizonRuntime_s;
+
     if isfield(running.summary, 'contractSearchRuntime_s'); running.summary.contractSearchRuntime_s = contractSearchRuntime_s; end
     if isfield(running.summary, 'fullHorizonRuntime_s'); running.summary.fullHorizonRuntime_s = fullHorizonRuntime_s; end
 

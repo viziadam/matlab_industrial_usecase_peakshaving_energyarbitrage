@@ -530,6 +530,21 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
     end
 
     finalSoH = state_bess.cell_state.Deg.SOH;
+    finalCycleDegradationFD = state_bess.cell_state.Deg.sum_cycle;
+    finalCalendarDegradationFD = state_bess.cell_state.Deg.sum_cal;
+    finalTotalDegradationFD = state_bess.cell_state.Deg.FD;
+
+    finalCycleDegradationPct = ...
+        local_degradation_fd_to_pct( ...
+            finalCycleDegradationFD, ...
+            finalTotalDegradationFD, ...
+            finalSoH);
+
+    finalCalendarDegradationPct = ...
+        local_degradation_fd_to_pct( ...
+            finalCalendarDegradationFD, ...
+            finalTotalDegradationFD, ...
+            finalSoH);
 
     profile.finalize_s = toc(tStage);
     profile.total_s = toc(tFull);
@@ -567,6 +582,11 @@ function [running, result, detail] = run_full_horizon_for_fixed_contract( ...
 
     result.finalSoC = finalSoC;
     result.finalSoH = finalSoH;
+    result.finalCycleDegradationFD = finalCycleDegradationFD;
+    result.finalCalendarDegradationFD = finalCalendarDegradationFD;
+    result.finalTotalDegradationFD = finalTotalDegradationFD;
+    result.finalCycleDegradationPct = finalCycleDegradationPct;
+    result.finalCalendarDegradationPct = finalCalendarDegradationPct;
 
     result.total_cost_period_huf = running.scalar.objectiveCost_HUF;
     result.energy_cost_period_huf = running.scalar.energyCost_HUF;
@@ -740,4 +760,16 @@ function pars_planner = local_apply_planner_degradation_single( ...
 
     pars_planner.dcdc_eta_nom = pars.dcdc_eta_nom * eta_factor;
     pars_planner.pcs_eta_nom = pars.pcs_eta_nom * eta_factor;
+end
+
+function degradationPct = local_degradation_fd_to_pct(componentFD, totalFD, finalSoH)
+
+    totalSohLossPct = 100 * max(0, 1 - finalSoH);
+
+    if ~isfinite(componentFD) || ~isfinite(totalFD) || totalFD <= 1e-12
+        degradationPct = 0;
+        return;
+    end
+
+    degradationPct = totalSohLossPct * componentFD / totalFD;
 end

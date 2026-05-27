@@ -83,6 +83,27 @@ function [running, simSummary, detail] = simulate_industrial_no_bess_candidate_h
     summarySource.finalSoHDc = NaN;
     summarySource.finalSoHAc = NaN;
 
+    summarySource.finalCycleDegradationFD = 0;
+    summarySource.finalCalendarDegradationFD = 0;
+    summarySource.finalTotalDegradationFD = 0;
+
+    summarySource.finalCycleDegradationPct = 0;
+    summarySource.finalCalendarDegradationPct = 0;
+
+    summarySource.finalCycleDegradationFDDc = 0;
+    summarySource.finalCalendarDegradationFDDc = 0;
+    summarySource.finalTotalDegradationFDDc = 0;
+
+    summarySource.finalCycleDegradationPctDc = 0;
+    summarySource.finalCalendarDegradationPctDc = 0;
+
+    summarySource.finalCycleDegradationFDAc = 0;
+    summarySource.finalCalendarDegradationFDAc = 0;
+    summarySource.finalTotalDegradationFDAc = 0;
+
+    summarySource.finalCycleDegradationPctAc = 0;
+    summarySource.finalCalendarDegradationPctAc = 0;
+
     summarySource.contractSearchRuntime_s = contractSearchRuntime_s;
     summarySource.fullHorizonRuntime_s = fullHorizonRuntime_s;
 

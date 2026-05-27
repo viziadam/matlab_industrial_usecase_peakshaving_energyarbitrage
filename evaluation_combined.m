@@ -103,8 +103,8 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     figSpecs(1).plots(3).type = "line";
     figSpecs(1).plots(3).x = "E_BESS_kWh";
     figSpecs(1).plots(3).y = [
-        "cyclicDeltaSoH_pct"
-        "calendarDeltaSoH_pct"
+        "finalCycleDegradationPct"
+        "finalCalendarDegradationPct"
     ];
     figSpecs(1).plots(3).labels = [
         "Ciklikus degradacio"
@@ -135,7 +135,7 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     % =====================================================================
 
     figSpecs(2).name = "combined_savings_and_net_value";
-    figSpecs(2).layout = [2 1];
+    figSpecs(2).layout = [3 1];
 
     figSpecs(2).plots(1).type = "paired_stacked_bar";
     figSpecs(2).plots(1).y = [
@@ -186,6 +186,23 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
     figSpecs(2).plots(2).autoYLim = autoYLim;
     figSpecs(2).plots(2).autoYMarginFrac = autoYMarginFrac;
     figSpecs(2).plots(2).zeroLine = true;
+
+    figSpecs(2).plots(3).type = "line";
+    figSpecs(2).plots(3).x = "E_BESS_kWh";
+    figSpecs(2).plots(3).y = "marginalBenefit_MHUF_per_MWh";
+    figSpecs(2).plots(3).labels = "Marginalis BESS haszon";
+    figSpecs(2).plots(3).lineColorsByCoupling = couplingColors;
+    figSpecs(2).plots(3).lineStylesByCoupling = couplingLineStyles;
+    figSpecs(2).plots(3).title = "BESS kapacitas marginalis haszna";
+    figSpecs(2).plots(3).xlabel = "BESS kapacitas [kWh]";
+    figSpecs(2).plots(3).ylabel = "Marginalis haszon [M HUF/MWh]";
+    figSpecs(2).plots(3).legend = "eastoutside";
+    figSpecs(2).plots(3).showValues = showValues;
+    figSpecs(2).plots(3).valueFmt = "%.2f";
+    figSpecs(2).plots(3).hideZeroBess = true;
+    figSpecs(2).plots(3).autoYLim = autoYLim;
+    figSpecs(2).plots(3).autoYMarginFrac = autoYMarginFrac;
+    figSpecs(2).plots(3).zeroLine = true;
 
     % =====================================================================
     % FIGURE 3 - COMBINED OPERATION INDICATORS
@@ -375,12 +392,17 @@ function T = local_add_basic_combined_columns(T, cfg)
         local_col(T, 'objectiveCost_HUF', NaN) - ...
         local_col(T, 'degradationCost_HUF', 0);
 
-    pvUsed_kWh = local_col(T, 'pvToLoad_kWh', NaN) + ...
-                 local_col(T, 'pvToBess_kWh', NaN);
+    pvUsed_kWh = ...
+        local_col(T, 'pvToLoad_kWh', NaN) + ...
+        local_col(T, 'pvToBess_kWh', NaN);
 
-    pvTotal_kWh = pvUsed_kWh + local_col(T, 'curtailment_kWh', 0);
+    pvProduced_kWh = ...
+        local_col(T, 'pvToLoad_kWh', NaN) + ...
+        local_col(T, 'pvToBess_kWh', NaN) + ...
+        local_col(T, 'curtailment_kWh', 0);
 
-    T.pvUtilization_pct = 100 .* local_safe_divide_vec(pvUsed_kWh, pvTotal_kWh);
+    T.pvUtilization_pct = ...
+        100 .* local_safe_divide_vec(pvUsed_kWh, pvProduced_kWh);
 end
 
 
@@ -516,6 +538,15 @@ function T = local_add_zero_bess_reference_columns(T, cfg)
     T.contractReductionVsZero_pct(zeroMask) = 0;
     T.peakShavingEfficiency_kW_per_MWh(zeroMask) = NaN;
     T.energyValuePerThroughput_HUF_per_kWh(zeroMask) = NaN;
+    T.marginalBenefit_HUF_per_kWh = ...
+        local_compute_marginal_benefit_by_capacity( ...
+            T, ...
+            'E_BESS_kWh', ...
+            'combinedPeriodNPV_HUF');
+
+    T.marginalBenefit_MHUF_per_MWh = ...
+        T.marginalBenefit_HUF_per_kWh ./ 1000;
+
 end
 
 
@@ -576,4 +607,27 @@ function y = local_safe_divide_vec(a, b)
     y = NaN(size(a));
     mask = isfinite(a) & isfinite(b) & abs(b) > 1e-12;
     y(mask) = a(mask) ./ b(mask);
+end
+
+function marginalValue = local_compute_marginal_benefit_by_capacity(T, xField, valueField)
+
+    x = T.(xField);
+    v = T.(valueField);
+
+    marginalValue = NaN(height(T), 1);
+
+    valid = isfinite(x) & isfinite(v);
+    idx = find(valid);
+
+    if numel(idx) < 2
+        return;
+    end
+
+    [~, ord] = sort(x(idx));
+    idx = idx(ord);
+
+    dx = [NaN; diff(x(idx))];
+    dv = [NaN; diff(v(idx))];
+
+    marginalValue(idx) = dv ./ max(dx, eps);
 end

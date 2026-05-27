@@ -113,9 +113,12 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     pars.pcs_eff_eta_points  = cfg.converter.pcsb.eta_points;
 
     % Regi fallback mezok. Ezek csak kompatibilitas miatt maradnak.
-    pars.inv_eta = pars.central_inv_eta_nom;
-    pars.eta_c = pars.dcdc_eta_nom;
-    pars.eta_d = pars.dcdc_eta_nom;
+    % pars.inv_eta = pars.central_inv_eta_nom;
+    % pars.eta_c = pars.dcdc_eta_nom;
+    % pars.eta_d = pars.dcdc_eta_nom;
+    pars.inv_eta = cfg.converter.central_inv.eta_nom;
+    pars.eta_c = cfg.converter.dcdc.eta_nom;
+    pars.eta_d = cfg.converter.dcdc.eta_nom;
 
     pars.degradation_cost_per_kWh = cfg.dispatch.degradation_cost_per_kWh;
     pars.bessCoupling = lower(string(cfg.system.bessCoupling));
@@ -206,6 +209,33 @@ function [running, simSummary, detail] = simulate_industrial_candidate_horizon( 
     summarySource.finalSoC = full_result.finalSoC;
     summarySource.finalSoH = full_result.finalSoH;
     summarySource.finalSoH_pct = 100 * full_result.finalSoH;
+
+    summarySource.finalCycleDegradationFD = ...
+        full_result.finalCycleDegradationFD;
+
+    summarySource.finalCalendarDegradationFD = ...
+        full_result.finalCalendarDegradationFD;
+
+    summarySource.finalTotalDegradationFD = ...
+        full_result.finalTotalDegradationFD;
+
+    summarySource.finalCycleDegradationPct = ...
+        full_result.finalCycleDegradationPct;
+
+    summarySource.finalCalendarDegradationPct = ...
+        full_result.finalCalendarDegradationPct;
+
+    summarySource.finalCycleDegradationFDDc = NaN;
+    summarySource.finalCalendarDegradationFDDc = NaN;
+    summarySource.finalTotalDegradationFDDc = NaN;
+    summarySource.finalCycleDegradationPctDc = NaN;
+    summarySource.finalCalendarDegradationPctDc = NaN;
+
+    summarySource.finalCycleDegradationFDAc = NaN;
+    summarySource.finalCalendarDegradationFDAc = NaN;
+    summarySource.finalTotalDegradationFDAc = NaN;
+    summarySource.finalCycleDegradationPctAc = NaN;
+    summarySource.finalCalendarDegradationPctAc = NaN;
 
     summarySource.finalSoCDc = NaN;
     summarySource.finalSoCAc = NaN;

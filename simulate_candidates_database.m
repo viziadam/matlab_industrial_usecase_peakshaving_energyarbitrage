@@ -130,21 +130,39 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             end
 
             tStage = tic;
-            DB = finalize_candidate_result(DB, c, running, runtime_s, cfgRun);
-            runtimeProfile.finalize_s = toc(tStage);
+
+            if diagnosticMode
+
+                runtimeProfile.finalize_s = 0;
+
+            else
+
+                DB = finalize_candidate_result(DB, c, running, runtime_s, cfgRun);
+                runtimeProfile.finalize_s = toc(tStage);
+
+            end
 
             tStageDiagnostics = tic;
 
             if diagnosticMode
-                if ~isfield(DB, 'diagnostics') || isempty(DB.diagnostics)
-                    DB.diagnostics = struct();
-                end
 
                 fieldName = sprintf('candidate_%d', c);
-                DB.diagnostics.(fieldName) = struct();
-                DB.diagnostics.(fieldName).design = design;
-                DB.diagnostics.(fieldName).summary = simSummary;
-                DB.diagnostics.(fieldName).detail = detail;
+
+                diagnosticResult = struct();
+                diagnosticResult.design = design;
+                diagnosticResult.summary = simSummary;
+                diagnosticResult.detail = detail;
+                diagnosticResult.runtimeProfile = runtimeProfile;
+                diagnosticResult.candidateIndex = c;
+                diagnosticResult.candidateID = candidateID;
+                diagnosticResult.coupling = string(cfgRun.system.bessCoupling);
+                diagnosticResult.objectiveMode = string(cfgRun.dispatch.objectiveMode);
+
+                local_save_candidate_diagnostic_result( ...
+                    cfgRun, ...
+                    c, ...
+                    fieldName, ...
+                    diagnosticResult);
 
                 if isfield(cfgRun.diagnostics, 'makeDispatchDiagnosticPlots') && cfgRun.diagnostics.makeDispatchDiagnosticPlots
 
@@ -168,18 +186,33 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             runtime_s = toc(tCandidate);
             runtimeProfile.total_s = runtime_s;
 
-            DB.candidateTable.wasSimulated(c) = false;
-            DB.candidateTable.hasError(c) = true;
-            DB.candidateTable.errorMessage(c) = string(ME.message);
-            DB.candidateTable.runtime_s(c) = runtime_s;
+            if diagnosticMode
 
-            if profilingEnabled
-                DB = local_store_runtime_profile(DB, c, runtimeProfile);
-                local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, true);
-            end
+                local_save_candidate_diagnostic_error( ...
+                    cfg, ...
+                    c, ...
+                    candidateID, ...
+                    ME, ...
+                    runtimeProfile);
 
-            if isfield(cfg, 'sim') && isfield(cfg.sim, 'saveAfterEachCandidate') && cfg.sim.saveAfterEachCandidate
-                save_candidates_database(DB, cfg);
+            else
+
+                DB.candidateTable.wasSimulated(c) = false;
+                DB.candidateTable.hasError(c) = true;
+                DB.candidateTable.errorMessage(c) = string(ME.message);
+                DB.candidateTable.runtime_s(c) = runtime_s;
+
+                if profilingEnabled
+                    DB = local_store_runtime_profile(DB, c, runtimeProfile);
+                    local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, true);
+                end
+
+                if isfield(cfg, 'sim') && ...
+                   isfield(cfg.sim, 'saveAfterEachCandidate') && ...
+                   cfg.sim.saveAfterEachCandidate
+
+                    save_candidates_database(DB, cfg);
+                end
             end
 
             fprintf('\nCandidate %d failed after %.2f s.\n', c, runtime_s);
@@ -189,7 +222,11 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
 
         tStage = tic;
 
-        if isfield(cfg, 'sim') && isfield(cfg.sim, 'saveAfterEachCandidate') && cfg.sim.saveAfterEachCandidate
+        if ~diagnosticMode && ...
+           isfield(cfg, 'sim') && ...
+           isfield(cfg.sim, 'saveAfterEachCandidate') && ...
+           cfg.sim.saveAfterEachCandidate
+
             save_candidates_database(DB, cfg);
         end
 
@@ -199,64 +236,30 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             runtimeProfile.total_s - runtimeProfile.design_s - runtimeProfile.simulation_s - ...
             runtimeProfile.finalize_s - runtimeProfile.diagnostics_s - runtimeProfile.save_s, 0);
 
-        DB.candidateTable.runtime_s(c) = runtimeProfile.total_s;
+        if diagnosticMode
 
-        if profilingEnabled
-            DB = local_store_runtime_profile(DB, c, runtimeProfile);
             local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, false);
-        end
-    end
 
-    if diagnosticMode && isfield(cfg.diagnostics, 'runEvaluation') && cfg.diagnostics.runEvaluation
-
-        if coupling == "hybrid"
-            fprintf('\nHybrid diagnostic DB saved. Legacy diagnostic evaluation skipped for hybrid.\n');
         else
-            evalCfgDiag = create_evaluation_config(cfg);
-            evalCfgDiag.output.baseFolder = fullfile(cfg.diagnostics.outputFolder, 'evaluation');
 
-            if ~exist(evalCfgDiag.output.baseFolder, 'dir')
-                mkdir(evalCfgDiag.output.baseFolder);
-            end
+            DB.candidateTable.runtime_s(c) = runtimeProfile.total_s;
 
-            evalCfgDiag.output.saveEvaluationMat = true;
-            evalCfgDiag.output.saveEvaluationCsv = true;
-            evalCfgDiag.output.saveReportTables = true;
-            evalCfgDiag.plots.makePlots = true;
-            evalCfgDiag.plots.makeCandidateSweepPlots = false;
-            evalCfgDiag.plots.makeSelectedCandidateYearlyPlots = true;
-
-            evaluationResult = evaluation(cfg, evalCfgDiag, DB); %#ok<NASGU>
-
-            save(fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'), ...
-                'evaluationResult', '-v7.3');
-
-            fprintf('\nDiagnostic evaluation saved:\n%s\n', fullfile(evalCfgDiag.output.baseFolder, 'diagnostic_evaluation_result.mat'));
-
-            diagnosticCandidateList = cfg.diagnostics.candidateIndex(:).';
-
-            for ii = 1:numel(diagnosticCandidateList)
-                selectedCandidateIndex = diagnosticCandidateList(ii);
-
-                if ~isempty(baselineIdx) && selectedCandidateIndex == baselineIdx
-                    continue;
-                end
-
-                yearlyResult = evaluate_selected_candidate_yearly_budget(DB, cfg, evalCfgDiag, selectedCandidateIndex);
-                yearlyOutDir = fullfile(cfg.diagnostics.outputFolder, sprintf('candidate_%06d', selectedCandidateIndex), 'yearly_budget');
-
-                if ~exist(yearlyOutDir, 'dir')
-                    mkdir(yearlyOutDir);
-                end
-
-                yearlyBudgetTable = yearlyResult.yearlyBudgetTable; %#ok<NASGU>
-                writetable(yearlyBudgetTable, fullfile(yearlyOutDir, 'yearly_budget_table.csv'));
-                save(fullfile(yearlyOutDir, 'yearly_budget_result.mat'), 'yearlyResult', '-v7.3');
+            if profilingEnabled
+                DB = local_store_runtime_profile(DB, c, runtimeProfile);
+                local_print_candidate_runtime_profile(c, candidateID, runtimeProfile, false);
             end
         end
     end
 
-    if ~diagnosticMode && isfield(cfg, 'evaluation') && isfield(cfg.evaluation, 'runAfterSimulation') && cfg.evaluation.runAfterSimulation
+    if diagnosticMode
+        fprintf('\nDiagnostic mode finished. Main result database was not overwritten.\n');
+        return;
+    end
+
+    if isfield(cfg, 'evaluation') && ...
+       isfield(cfg.evaluation, 'runAfterSimulation') && ...
+       cfg.evaluation.runAfterSimulation
+
         if coupling == "hybrid"
             fprintf('\nHybrid DB saved. Legacy evaluation skipped for hybrid.\n');
         else
@@ -264,10 +267,12 @@ function DB = simulate_candidates_database(data, DB, cfg, industrialCtx)
             evaluationResult = evaluation(cfg, evalCfg, DB); %#ok<NASGU>
 
             if isfield(cfg.evaluation, 'saveEvaluationResult') && cfg.evaluation.saveEvaluationResult
-                save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), 'evaluationResult', '-v7.3');
+                save(fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'), ...
+                    'evaluationResult', '-v7.3');
             end
 
-            fprintf('\nFull evaluation saved:\n%s\n', fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
+            fprintf('\nFull evaluation saved:\n%s\n', ...
+                fullfile(evalCfg.output.baseFolder, 'evaluation_result.mat'));
         end
     end
 end
@@ -590,4 +595,47 @@ function profile = local_copy_full_horizon_profile(profile, simSummary)
 
         profile.fh_other_s = max(profile.fh_total_s - measuredFH_s, 0);
     end
+end
+
+function local_save_candidate_diagnostic_result(cfgRun, candidateIndex, fieldName, diagnosticResult)
+
+    outDir = fullfile( ...
+        cfgRun.diagnostics.outputFolder, ...
+        sprintf('candidate_%06d', candidateIndex));
+
+    if ~exist(outDir, 'dir')
+        mkdir(outDir);
+    end
+
+    diagnosticFile = fullfile(outDir, sprintf('%s_diagnostic_result.mat', fieldName));
+
+    save(diagnosticFile, 'diagnosticResult', '-v7.3');
+
+    fprintf('Diagnostic result saved separately: %s\n', diagnosticFile);
+end
+
+
+function local_save_candidate_diagnostic_error(cfg, candidateIndex, candidateID, ME, runtimeProfile)
+
+    outDir = fullfile( ...
+        cfg.diagnostics.outputFolder, ...
+        sprintf('candidate_%06d', candidateIndex));
+
+    if ~exist(outDir, 'dir')
+        mkdir(outDir);
+    end
+
+    diagnosticError = struct();
+    diagnosticError.candidateIndex = candidateIndex;
+    diagnosticError.candidateID = candidateID;
+    diagnosticError.message = string(ME.message);
+    diagnosticError.identifier = string(ME.identifier);
+    diagnosticError.stack = ME.stack;
+    diagnosticError.runtimeProfile = runtimeProfile;
+
+    diagnosticFile = fullfile(outDir, 'diagnostic_error.mat');
+
+    save(diagnosticFile, 'diagnosticError', '-v7.3');
+
+    fprintf('Diagnostic error saved separately: %s\n', diagnosticFile);
 end
