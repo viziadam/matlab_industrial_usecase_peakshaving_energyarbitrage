@@ -46,7 +46,7 @@ function runResult = run_all_topologies_for_mode(objectiveMode, diagnosticCandid
 
     if objectiveMode == "combined"
         % couplings = ["dc", "ac", "hybrid"];
-        couplings = [ "ac", "hybrid"];
+        couplings = [ "dc"];
     else
         couplings = ["dc", "ac"];
     end

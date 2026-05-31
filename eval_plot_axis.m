@@ -812,13 +812,6 @@ end
 
 function plot_heatmap(ax, data, ps)
 
-    ps = setdef(ps, 'scale', 1);
-    ps = setdef(ps, 'heatmapStyle', "soft_points");
-    ps = setdef(ps, 'colormapName', "parula");
-    ps = setdef(ps, 'markerSize', 320);
-    ps = setdef(ps, 'showContour', false);
-    ps = setdef(ps, 'contourLevels', 8);
-
     T = getT(data, string(ps.coupling));
 
     x = T.(char(ps.x));
@@ -855,30 +848,58 @@ function plot_heatmap(ax, data, ps)
     scatter(ax, x, y, ps.markerSize, z, ...
         's', ...
         'filled', ...
-        'MarkerEdgeColor', [0.92 0.92 0.92], ...
-        'LineWidth', 0.35, ...
+        'MarkerEdgeColor', [0.88 0.88 0.88], ...
+        'LineWidth', 0.45, ...
         'HandleVisibility', 'off');
 
     colormap(ax, local_get_heatmap_colormap(ps));
 
     cb = colorbar(ax);
-    ylabel(cb, string(ps.colorLabel), 'Interpreter', 'none');
 
-    if ps.showContour && numel(unique(x)) >= 3 && numel(unique(y)) >= 3
+    if isfield(ps, 'colorLabel') && ~isempty(ps.colorLabel)
+        ylabel(cb, string(ps.colorLabel), 'Interpreter', 'none');
+    end
+
+    if isfield(ps, 'showContour') && ps.showContour
+
+        if numel(unique(x)) >= 3 && numel(unique(y)) >= 3
+
+            hold(ax, 'on');
+
+            xq = linspace(min(x), max(x), 120);
+            yq = linspace(min(y), max(y), 120);
+            [Xq, Yq] = meshgrid(xq, yq);
+
+            F = scatteredInterpolant(x(:), y(:), z(:), 'natural', 'none');
+            Zq = F(Xq, Yq);
+
+            contour(ax, Xq, Yq, Zq, ps.contourLevels, ...
+                'LineColor', [0.18 0.18 0.18], ...
+                'LineWidth', 0.50, ...
+                'HandleVisibility', 'off');
+
+            hold(ax, 'off');
+        end
+    end
+
+    if isfield(ps, 'showValueLabels') && ps.showValueLabels
 
         hold(ax, 'on');
 
-        xq = linspace(min(x), max(x), 120);
-        yq = linspace(min(y), max(y), 120);
-        [Xq, Yq] = meshgrid(xq, yq);
+        for i = 1:numel(z)
 
-        F = scatteredInterpolant(x(:), y(:), z(:), 'natural', 'none');
-        Zq = F(Xq, Yq);
-
-        contour(ax, Xq, Yq, Zq, ps.contourLevels, ...
-            'LineColor', [0.18 0.18 0.18], ...
-            'LineWidth', 0.65, ...
-            'HandleVisibility', 'off');
+            text(ax, x(i), y(i), sprintf(char(ps.valueLabelFmt), z(i)), ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'middle', ...
+                'FontSize', 7.5, ...
+                'FontWeight', 'bold', ...
+                'Color', [0.05 0.05 0.05], ...
+                'BackgroundColor', [1.00 1.00 1.00], ...
+                'Margin', 0.6, ...
+                'Clipping', 'on', ...
+                'Interpreter', 'none', ...
+                'HandleVisibility', 'off');
+        end
 
         hold(ax, 'off');
     end
@@ -891,41 +912,56 @@ function plot_heatmap(ax, data, ps)
     ax.Layer = 'top';
     ax.FontSize = 10;
     ax.LineWidth = 0.85;
-    ax.Color = [0.96 0.96 0.96];
+    ax.Color = [0.97 0.97 0.97];
 
     grid(ax, 'on');
     ax.GridAlpha = 0.12;
     ax.MinorGridAlpha = 0.08;
 
-    xt = unique(x);
-    yt = unique(y);
+    xVals = unique(x);
+    yVals = unique(y);
 
-    xticks(ax, xt);
-    yticks(ax, yt);
+    xticks(ax, xVals);
 
-    if numel(xt) > 8
-        xticks(ax, xt(1:ceil(numel(xt) / 8):end));
+    if isfield(ps, 'yTicks') && ~isempty(ps.yTicks)
+        yticks(ax, ps.yTicks);
+    else
+        yticks(ax, yVals);
     end
 
-    if numel(yt) > 9
-        yticks(ax, yt(1:ceil(numel(yt) / 9):end));
+    if numel(xVals) <= 12
+        xticklabels(ax, compose('%.1f', xVals));
     end
 
-    ylim(ax, [0 100]);
-
-    xMin = min(x);
-    xMax = max(x);
-
-    if ~isfinite(xMin) || ~isfinite(xMax)
-        return;
+    if isfield(ps, 'yTicks') && ~isempty(ps.yTicks)
+        yticklabels(ax, compose('%.0f', ps.yTicks));
     end
+
+    xtickangle(ax, 35);
+
+    xMin = min(xVals);
+    xMax = max(xVals);
 
     if abs(xMax - xMin) <= 1e-12
-        xPad = max(0.05 * abs(xMin), 0.1);
-        xlim(ax, [xMin - xPad, xMax + xPad]);
+        xPad = 0.10;
     else
-        xRange = xMax - xMin;
-        xlim(ax, [xMin - 0.04 * xRange, xMax + 0.04 * xRange]);
+        xPad = ps.xPadFrac * (xMax - xMin);
+    end
+
+    xlim(ax, [xMin - xPad, xMax + xPad]);
+
+    if isfield(ps, 'yLim') && ~isempty(ps.yLim)
+        ylim(ax, ps.yLim);
+    else
+        yMin = min(yVals);
+        yMax = max(yVals);
+
+        if yMin >= 0 && yMax <= 100
+            ylim(ax, [-6 106]);
+        else
+            yPad = 0.06 * max(yMax - yMin, eps);
+            ylim(ax, [yMin - yPad, yMax + yPad]);
+        end
     end
 end
 
@@ -942,6 +978,10 @@ function cmap = local_get_heatmap_colormap(ps)
                 cmap = parula(256);
             end
 
+        case "parula"
+
+            cmap = parula(256);
+
         case "gray"
 
             cmap = gray(256);
@@ -951,7 +991,6 @@ function cmap = local_get_heatmap_colormap(ps)
             cmap = parula(256);
     end
 end
-
 
 function plot_profile_line(ax, data, ps)
 

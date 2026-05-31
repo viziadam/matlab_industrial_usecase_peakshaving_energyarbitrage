@@ -81,6 +81,9 @@ function result = local_run_single_mode(basePath, mode, opts)
 
     data = local_load_mode_data(cfg, mode, opts);
 
+    outputFolder = local_output_folder(basePath, mode, opts);
+    opts.outputFolder = outputFolder;
+
     switch mode
 
         case "energy_only"
@@ -95,8 +98,6 @@ function result = local_run_single_mode(basePath, mode, opts)
         case "hybrid"
             [figSpecs, data] = evaluation_hybrid(data, cfg, opts);
     end
-
-    outputFolder = local_output_folder(basePath, mode, opts);
 
     plotOpts = opts;
     plotOpts.outputFolder = outputFolder;

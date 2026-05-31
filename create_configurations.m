@@ -10,6 +10,14 @@ function cfg = create_configurations(basePath)
     cfg = struct();
 
     % =====================================================================
+    % 0) Case / scenario identifier
+    % =====================================================================
+    % Ezt kell atirni, ha mas bemeneti parameterekkel uj rendszert futtatsz.
+    % Minden eredmeny, diagnosztika es kiertekeles kulon almappaba kerul.
+    cfg.case = struct();
+    cfg.case.id = "case_pv_1MW";
+
+    % =====================================================================
     % 1) System
     % =====================================================================
     cfg.system.bessCoupling = "dc";
@@ -18,7 +26,7 @@ function cfg = create_configurations(basePath)
     cfg.profiling.enabled = true;
 
     
-    cfg.dispatch.objectiveMode = "combined";
+    cfg.dispatch.objectiveMode = "peak_only";
     
     cfg.dispatch.peakOnlyDisableEnergyCost = true;
     cfg.dispatch.noBessContract_kW = 700;
@@ -39,7 +47,11 @@ function cfg = create_configurations(basePath)
     % 2) Paths
     % =====================================================================
     cfg.paths.base = basePath;
-    cfg.paths.results = fullfile(basePath, 'results');
+
+    cfg.paths.resultsRoot = fullfile(basePath, 'results');
+    % cfg.paths.results = fullfile(cfg.paths.resultsRoot, char(cfg.case.id));
+    cfg.paths.results = cfg.paths.resultsRoot;
+
     cfg.paths.figures = fullfile(cfg.paths.results, 'figures');
 
     if ~exist(cfg.paths.results, 'dir')
@@ -68,6 +80,7 @@ function cfg = create_configurations(basePath)
     cfg.pvB.tiltX = 11;
     cfg.pvB.tiltZ = [70, 250];
     cfg.pvB.P_dc_kWp = [100.5, 100.5];
+    % cfg.pvB.P_dc_kWp = [274, 274];
 
     cfg.pv.modulePower_kWp = 0.325;
 
@@ -196,9 +209,9 @@ function cfg = create_configurations(basePath)
     % 11) Diagnostics
     % =====================================================================
     cfg.diagnostics = struct();
-    cfg.diagnostics.enabled = false;
+    cfg.diagnostics.enabled = true;
     cfg.diagnostics.testMode = cfg.diagnostics.enabled;
-    cfg.diagnostics.candidateIndex = 6;
+    cfg.diagnostics.candidateIndex = 10;
 
     if cfg.diagnostics.enabled
         cfg.diagnostics.storeCandidateDetail = false;

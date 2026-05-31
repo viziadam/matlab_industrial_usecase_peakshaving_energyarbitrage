@@ -19,127 +19,148 @@ function [figSpecs, data] = evaluation_hybrid(data, cfg, opts)
 
     %#ok<INUSD>
 
-    data = local_prepare_hybrid_columns(data, cfg);
+    % ---------------------------------------------------------------------
+    % Hybrid economic assumptions
+    % ---------------------------------------------------------------------
+    % Fajlagos BESS CAPEX ertekek kulon AC- es DC-csatolt BESS agra.
+    % Mertekegyseg: HUF/kWh
+    %
+    % Ezeket itt lehet gyorsan valtoztatni erzekenysegvizsgalathoz.
+    %
+    % Megjegyzes:
+    %   A teljesitmeny oldali CAPEX tovabbra is a cfg.cost.bess_power_huf_per_kW
+    %   erteket hasznalja, de a kapacitas oldali CAPEX mar kulon DC es AC.
+    eur_to_huf = 400;
+    capexDC_eur_per_kWh = 280;
+    capexAC_eur_per_kWh = 280;
+    capexDc_HUF_per_kWh = capexDC_eur_per_kWh*eur_to_huf;
+    capexAc_HUF_per_kWh = capexAC_eur_per_kWh*eur_to_huf;
+
+    costPars = struct();
+    costPars.capexDc_HUF_per_kWh = capexDc_HUF_per_kWh;
+    costPars.capexAc_HUF_per_kWh = capexAc_HUF_per_kWh;
+
+    data = local_prepare_hybrid_columns(data, cfg, costPars);
 
     figSpecs = struct([]);
 
     % =====================================================================
-    % FIGURE 1 - HYBRID ECONOMIC VALUE
+    % FIGURE 1 - AKKUMULATOR ALLAPOTA ES IGENYBEVETELE
     % =====================================================================
 
-    figSpecs(1).name = "hybrid_economic_value_heatmaps";
-    figSpecs(1).layout = [2 2];
+    figSpecs(1).name = "hybrid_akkumulator_allapot_es_igenybevetel";
+    figSpecs(1).layout = [1 2];
 
     figSpecs(1).plots(1).type = "heatmap";
     figSpecs(1).plots(1).coupling = "hybrid";
-    figSpecs(1).plots(1).x = "BESS_PV_ratio_dc";
-    figSpecs(1).plots(1).y = "BESS_PV_ratio_ac";
-    figSpecs(1).plots(1).z = "combinedPeriodNPV_MHUF";
-    figSpecs(1).plots(1).title = "Hybrid NPV a BESS = 0 referenciahoz kepest";
-    figSpecs(1).plots(1).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(1).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(1).colorLabel = "NPV [M HUF]";
+    figSpecs(1).plots(1).x = "BESS_PV_ratio_total";
+    figSpecs(1).plots(1).y = "bessAcShare_pct";
+    figSpecs(1).plots(1).z = "finalSoH_pct";
+    figSpecs(1).plots(1).title = "Akkumulator vegso egeszsegi allapota";
+    figSpecs(1).plots(1).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(1).plots(1).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(1).plots(1).colorLabel = "SoH [%]";
 
     figSpecs(1).plots(2).type = "heatmap";
     figSpecs(1).plots(2).coupling = "hybrid";
-    figSpecs(1).plots(2).x = "BESS_PV_ratio_dc";
-    figSpecs(1).plots(2).y = "BESS_PV_ratio_ac";
-    figSpecs(1).plots(2).z = "netSavingVsZero_MHUF";
-    figSpecs(1).plots(2).title = "Netto megtakaritas a BESS = 0 referenciahoz kepest";
-    figSpecs(1).plots(2).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(2).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(2).colorLabel = "Netto megtakaritas [M HUF]";
-
-    figSpecs(1).plots(3).type = "heatmap";
-    figSpecs(1).plots(3).coupling = "hybrid";
-    figSpecs(1).plots(3).x = "BESS_PV_ratio_dc";
-    figSpecs(1).plots(3).y = "BESS_PV_ratio_ac";
-    figSpecs(1).plots(3).z = "energyCostSavingVsZero_MHUF";
-    figSpecs(1).plots(3).title = "Energiakoltseg-megtakaritas";
-    figSpecs(1).plots(3).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(3).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(3).colorLabel = "Energiakoltseg-megtakaritas [M HUF]";
-
-    figSpecs(1).plots(4).type = "heatmap";
-    figSpecs(1).plots(4).coupling = "hybrid";
-    figSpecs(1).plots(4).x = "BESS_PV_ratio_dc";
-    figSpecs(1).plots(4).y = "BESS_PV_ratio_ac";
-    figSpecs(1).plots(4).z = "performanceSavingVsZero_MHUF";
-    figSpecs(1).plots(4).title = "Teljesitmenydij-megtakaritas";
-    figSpecs(1).plots(4).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(4).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(1).plots(4).colorLabel = "Teljesitmenydij-megtakaritas [M HUF]";
+    figSpecs(1).plots(2).x = "BESS_PV_ratio_total";
+    figSpecs(1).plots(2).y = "bessAcShare_pct";
+    figSpecs(1).plots(2).z = "equivalentFullCycles_per_year";
+    figSpecs(1).plots(2).title = "Ekvivalens teljes ciklusszam evente";
+    figSpecs(1).plots(2).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(1).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(1).plots(2).colorLabel = "Ciklus/ev";
 
     % =====================================================================
-    % FIGURE 2 - GRID PROFILE QUALITY
+    % FIGURE 2 - GAZDASAGI MUTATOK
     % =====================================================================
 
-    figSpecs(2).name = "hybrid_grid_profile_quality_heatmaps";
+    figSpecs(2).name = "hybrid_gazdasagi_mutatok";
     figSpecs(2).layout = [1 2];
 
     figSpecs(2).plots(1).type = "heatmap";
     figSpecs(2).plots(1).coupling = "hybrid";
-    figSpecs(2).plots(1).x = "BESS_PV_ratio_dc";
-    figSpecs(2).plots(1).y = "BESS_PV_ratio_ac";
-    figSpecs(2).plots(1).z = "gridRampReduction_pct";
-    figSpecs(2).plots(1).title = "Halozati ramping csokkenese";
-    figSpecs(2).plots(1).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(2).plots(1).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(2).plots(1).colorLabel = "Ramp reduction [%]";
+    figSpecs(2).plots(1).x = "BESS_PV_ratio_total";
+    figSpecs(2).plots(1).y = "bessAcShare_pct";
+    figSpecs(2).plots(1).z = "netPresentValue_MHUF";
+    figSpecs(2).plots(1).title = "Netto jelenertek";
+    figSpecs(2).plots(1).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(2).plots(1).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(2).plots(1).colorLabel = "NPV [M HUF]";
+
+    % figSpecs(2).plots(2).type = "heatmap";
+    % figSpecs(2).plots(2).coupling = "hybrid";
+    % figSpecs(2).plots(2).x = "BESS_PV_ratio_total";
+    % figSpecs(2).plots(2).y = "bessAcShare_pct";
+    % figSpecs(2).plots(2).z = "bessCapexOpexTotal_MHUF";
+    % figSpecs(2).plots(2).title = "BESS beruhazasi es uzemeltetesi koltseg";
+    % figSpecs(2).plots(2).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    % figSpecs(2).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
+    % figSpecs(2).plots(2).colorLabel = "Koltseg [M HUF]";
 
     figSpecs(2).plots(2).type = "heatmap";
     figSpecs(2).plots(2).coupling = "hybrid";
-    figSpecs(2).plots(2).x = "BESS_PV_ratio_dc";
-    figSpecs(2).plots(2).y = "BESS_PV_ratio_ac";
-    figSpecs(2).plots(2).z = "residualLoadVariabilityReduction_pct";
-    figSpecs(2).plots(2).title = "Marado halozati terheles ingadozasanak csokkenese";
-    figSpecs(2).plots(2).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(2).plots(2).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(2).plots(2).colorLabel = "Variability reduction [%]";
+    figSpecs(2).plots(2).x = "BESS_PV_ratio_total";
+    figSpecs(2).plots(2).y = "bessAcShare_pct";
+    figSpecs(2).plots(2).z = "storageServiceCost_HUF_per_kWh";
+    figSpecs(2).plots(2).title = "Fajlagos tarolasi koltseg";
+    figSpecs(2).plots(2).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(2).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(2).plots(2).colorLabel = "HUF/kWh";
 
     % =====================================================================
-    % FIGURE 3 - BESS SIZING ECONOMIC EFFICIENCY
+    % FIGURE 3 - HALOZATI PROFILMINOSEG
     % =====================================================================
 
-    figSpecs(3).name = "hybrid_bess_sizing_value_heatmaps";
-    figSpecs(3).layout = [1 3];
+    figSpecs(3).name = "hybrid_halozati_profilminoseg";
+    figSpecs(3).layout = [1 1];
 
     figSpecs(3).plots(1).type = "heatmap";
     figSpecs(3).plots(1).coupling = "hybrid";
-    figSpecs(3).plots(1).x = "BESS_PV_ratio_dc";
-    figSpecs(3).plots(1).y = "BESS_PV_ratio_ac";
-    figSpecs(3).plots(1).z = "specificNPV_HUF_per_kWh";
-    figSpecs(3).plots(1).title = "Fajlagos NPV telepitett BESS kapacitasra vetitve";
-    figSpecs(3).plots(1).xlabel = "DC BESS/PV arany [kWh/kWp]";
-    figSpecs(3).plots(1).ylabel = "AC BESS/PV arany [kWh/kWp]";
-    figSpecs(3).plots(1).colorLabel = "HUF/kWh installed";
+    figSpecs(3).plots(1).x = "BESS_PV_ratio_total";
+    figSpecs(3).plots(1).y = "bessAcShare_pct";
+    figSpecs(3).plots(1).z = "residualLoadVariabilityReduction_pct";
+    figSpecs(3).plots(1).title = "Marado halozati terheles ingadozasanak csokkenese";
+    figSpecs(3).plots(1).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(3).plots(1).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(3).plots(1).colorLabel = "Csokkenes [%]";
 
-    figSpecs(3).plots(2).type = "heatmap";
-    figSpecs(3).plots(2).coupling = "hybrid";
-    figSpecs(3).plots(2).x = "E_BESS_total_MWh";
-    figSpecs(3).plots(2).y = "bessAcShare_pct";
-    figSpecs(3).plots(2).z = "marginalStorageValueDc_MHUF_per_MWh";
-    figSpecs(3).plots(2).title = "DC BESS kapacitas marginalis haszna";
-    figSpecs(3).plots(2).xlabel = "Teljes BESS kapacitas [MWh]";
-    figSpecs(3).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
-    figSpecs(3).plots(2).colorLabel = "M HUF/MWh";
+    % =====================================================================
+    % FIGURE 4 - MARGINALIS HASZON
+    % =====================================================================
 
-    figSpecs(3).plots(3).type = "heatmap";
-    figSpecs(3).plots(3).coupling = "hybrid";
-    figSpecs(3).plots(3).x = "E_BESS_total_MWh";
-    figSpecs(3).plots(3).y = "bessAcShare_pct";
-    figSpecs(3).plots(3).z = "marginalStorageValueAc_MHUF_per_MWh";
-    figSpecs(3).plots(3).title = "AC BESS kapacitas marginalis haszna";
-    figSpecs(3).plots(3).xlabel = "Teljes BESS kapacitas [MWh]";
-    figSpecs(3).plots(3).ylabel = "AC-csatolt BESS reszaranya [%]";
-    figSpecs(3).plots(3).colorLabel = "M HUF/MWh";
+    figSpecs(4).name = "hybrid_marginalis_haszon";
+    figSpecs(4).layout = [1 2];
+
+    figSpecs(4).plots(1).type = "heatmap";
+    figSpecs(4).plots(1).coupling = "hybrid";
+    figSpecs(4).plots(1).x = "BESS_PV_ratio_total";
+    figSpecs(4).plots(1).y = "bessAcShare_pct";
+    figSpecs(4).plots(1).z = "marginalStorageValueDc_MHUF_per_kWh";
+    figSpecs(4).plots(1).title = "DC-csatolt BESS marginalis haszna";
+    figSpecs(4).plots(1).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(4).plots(1).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(4).plots(1).colorLabel = "ezer HUF/kWh";
+
+    figSpecs(4).plots(2).type = "heatmap";
+    figSpecs(4).plots(2).coupling = "hybrid";
+    figSpecs(4).plots(2).x = "BESS_PV_ratio_total";
+    figSpecs(4).plots(2).y = "bessAcShare_pct";
+    figSpecs(4).plots(2).z = "marginalStorageValueAc_MHUF_per_kWh";
+    figSpecs(4).plots(2).title = "AC-csatolt BESS marginalis haszna";
+    figSpecs(4).plots(2).xlabel = "Teljes BESS/PV arany [kWh/kWp]";
+    figSpecs(4).plots(2).ylabel = "AC-csatolt BESS reszaranya [%]";
+    figSpecs(4).plots(2).colorLabel = "ezer HUF/kWh";
+
+    local_save_hybrid_best_candidate_table(data.hybrid.candidateTable, opts);
+    local_save_hybrid_best_candidate_cost_bridge_figure(data.hybrid.candidateTable, opts);
 
     figSpecs = local_apply_hybrid_total_share_axes(figSpecs);
     figSpecs = local_apply_hybrid_heatmap_styles(figSpecs);
 end
 
 
-function data = local_prepare_hybrid_columns(data, cfg)
+function data = local_prepare_hybrid_columns(data, cfg, costPars)
 
     if ~isfield(data, 'hybrid') || ...
        ~isfield(data.hybrid, 'candidateTable')
@@ -174,24 +195,39 @@ function data = local_prepare_hybrid_columns(data, cfg)
         'bessThroughput_kWh'});
 
     T = local_add_hybrid_axis_columns(T);
-    T = local_add_hybrid_basic_economics(T, cfg);
+    T = local_add_hybrid_basic_economics(T, cfg, costPars);
     T = local_add_hybrid_reference_metrics(T, cfg);
     T = local_add_hybrid_profile_quality_metrics(T, data);
+    T = local_add_hybrid_operational_lifetime_metrics(T, cfg);
     T = local_add_hybrid_sizing_value_metrics(T);
 
     data.hybrid.candidateTable = T;
 end
 
 
-function T = local_add_hybrid_basic_economics(T, cfg)
+function T = local_add_hybrid_basic_economics(T, cfg, costPars)
 
     simYears = cfg.analysis.simYears;
 
-    capexBess_HUF = ...
-        T.E_BESS_kWh .* cfg.cost.bess_huf_per_kWh + ...
+    capexBessEnergyDc_HUF = ...
+        T.E_BESS_dc_kWh .* costPars.capexDc_HUF_per_kWh;
+
+    capexBessEnergyAc_HUF = ...
+        T.E_BESS_ac_kWh .* costPars.capexAc_HUF_per_kWh;
+
+    capexBessEnergy_HUF = ...
+        capexBessEnergyDc_HUF + ...
+        capexBessEnergyAc_HUF;
+
+    capexBessPower_HUF = ...
         T.P_BESS_kW .* cfg.cost.bess_power_huf_per_kW;
 
-    opexBessAnnual_HUF = capexBess_HUF .* cfg.cost.bess_opex_frac_per_year;
+    capexBess_HUF = ...
+        capexBessEnergy_HUF + ...
+        capexBessPower_HUF;
+
+    opexBessAnnual_HUF = ...
+        capexBess_HUF .* cfg.cost.bess_opex_frac_per_year;
 
     finalSoH = T.finalSoH;
     finalSoH(~isfinite(finalSoH)) = 1;
@@ -199,20 +235,28 @@ function T = local_add_hybrid_basic_economics(T, cfg)
     deltaSoHTotal = max(0, 1 - finalSoH);
     deltaSoHAnnualEq = deltaSoHTotal ./ simYears;
 
-    if isfield(cfg.cost, 'bess_eol_soh_window')
-        eolWindow = cfg.cost.bess_eol_soh_window;
-    else
-        eolWindow = 0.2;
-    end
+    eolWindow = cfg.cost.bess_eol_soh_window;
 
     bessSohCapexAnnual_HUF = ...
         (deltaSoHAnnualEq ./ eolWindow) .* capexBess_HUF;
 
     bessAnnualCapexOpex_HUF = ...
-        bessSohCapexAnnual_HUF + opexBessAnnual_HUF;
+        bessSohCapexAnnual_HUF + ...
+        opexBessAnnual_HUF;
 
     bessCapexOpexTotal_HUF = ...
         simYears .* bessAnnualCapexOpex_HUF;
+
+    T.capexDc_HUF_per_kWh = ...
+        costPars.capexDc_HUF_per_kWh .* ones(height(T), 1);
+
+    T.capexAc_HUF_per_kWh = ...
+        costPars.capexAc_HUF_per_kWh .* ones(height(T), 1);
+
+    T.bessCapexEnergyDc_HUF = capexBessEnergyDc_HUF;
+    T.bessCapexEnergyAc_HUF = capexBessEnergyAc_HUF;
+    T.bessCapexEnergy_HUF = capexBessEnergy_HUF;
+    T.bessCapexPower_HUF = capexBessPower_HUF;
 
     T.finalSoH_pct = 100 .* finalSoH;
     T.deltaSoHTotal = deltaSoHTotal;
@@ -223,10 +267,15 @@ function T = local_add_hybrid_basic_economics(T, cfg)
     T.bessAnnualCapexOpex_HUF = bessAnnualCapexOpex_HUF;
     T.bessCapexOpexTotal_HUF = bessCapexOpexTotal_HUF;
 
+    T.bessCapex_MHUF = T.bessCapex_HUF ./ 1e6;
+    T.bessCapexEnergyDc_MHUF = T.bessCapexEnergyDc_HUF ./ 1e6;
+    T.bessCapexEnergyAc_MHUF = T.bessCapexEnergyAc_HUF ./ 1e6;
+    T.bessCapexPower_MHUF = T.bessCapexPower_HUF ./ 1e6;
+    T.bessCapexOpexTotal_MHUF = T.bessCapexOpexTotal_HUF ./ 1e6;
+
     T.operationalCostNoDispatchDeg_HUF = ...
         T.objectiveCost_HUF - T.degradationCost_HUF;
 end
-
 
 function T = local_add_hybrid_reference_metrics(T, cfg)
 
@@ -308,6 +357,18 @@ function T = local_add_hybrid_reference_metrics(T, cfg)
 
     T.combinedPeriodNPV_MHUF = ...
         T.combinedPeriodNPV_HUF ./ 1e6;
+
+    T.netPresentValue_HUF = T.combinedPeriodNPV_HUF;
+    T.netPresentValue_MHUF = T.combinedPeriodNPV_MHUF;
+
+    T.totalOperationalSaving_MHUF = ...
+        T.operationalSavingVsZero_HUF ./ 1e6;
+
+    T.annualNetSaving_MHUF_per_year = ...
+        T.combinedAnnualNetSaving_HUF ./ 1e6;
+
+    T.discountFactor = ...
+        discountFactor .* ones(height(T), 1);
 
     T.contractReductionVsZero_kW = ...
         refContract_kW - T.bestContract_kW;
@@ -430,10 +491,10 @@ function T = local_add_hybrid_sizing_value_metrics(T)
             dValue ./ max(dE, eps);
     end
 
-    T.marginalStorageValueDc_MHUF_per_MWh = ...
+    T.marginalStorageValueDc_MHUF_per_kWh = ...
         T.marginalStorageValueDc_HUF_per_kWh ./ 1000;
 
-    T.marginalStorageValueAc_MHUF_per_MWh = ...
+    T.marginalStorageValueAc_MHUF_per_kWh = ...
         T.marginalStorageValueAc_HUF_per_kWh ./ 1000;
 
     T.marginalStorageValue_HUF_per_kWh = ...
@@ -455,8 +516,8 @@ function T = local_add_hybrid_sizing_value_metrics(T)
     T.marginalStorageValue_HUF_per_kWh(onlyAc) = ...
         T.marginalStorageValueAc_HUF_per_kWh(onlyAc);
 
-    T.marginalStorageValue_MHUF_per_MWh = ...
-        T.marginalStorageValue_HUF_per_kWh ./ 1000;
+    T.marginalStorageValue_MHUF_per_kWh = ...
+        T.marginalStorageValue_HUF_per_kWh ./ 1e6;
 end
 
 
@@ -509,11 +570,11 @@ function figSpecs = local_apply_hybrid_total_share_axes(figSpecs)
 
         for p = 1:numel(figSpecs(f).plots)
 
-            figSpecs(f).plots(p).x = "E_BESS_total_MWh";
+            figSpecs(f).plots(p).x = "BESS_PV_ratio_total";
             figSpecs(f).plots(p).y = "bessAcShare_pct";
 
             figSpecs(f).plots(p).xlabel = ...
-                "Teljes BESS kapacitas [MWh]";
+                "Teljes BESS/PV arany [kWh/kWp]";
 
             figSpecs(f).plots(p).ylabel = ...
                 "AC-csatolt BESS reszaranya [%]";
@@ -524,33 +585,25 @@ end
 
 function figSpecs = local_apply_hybrid_heatmap_styles(figSpecs)
 
-    for p = 1:numel(figSpecs(1).plots)
+    for f = 1:numel(figSpecs)
 
-        figSpecs(1).plots(p).heatmapStyle = "soft_points";
-        figSpecs(1).plots(p).colormapName = "parula";
-        figSpecs(1).plots(p).markerSize = 360;
-        figSpecs(1).plots(p).showContour = false;
-        figSpecs(1).plots(p).hideLegend = true;
-    end
+        for p = 1:numel(figSpecs(f).plots)
 
-    for p = 1:numel(figSpecs(2).plots)
+            figSpecs(f).plots(p).heatmapStyle = "soft_points";
+            figSpecs(f).plots(p).colormapName = "turbo";
 
-        figSpecs(2).plots(p).heatmapStyle = "contour_points";
-        figSpecs(2).plots(p).colormapName = "turbo";
-        figSpecs(2).plots(p).markerSize = 300;
-        figSpecs(2).plots(p).showContour = true;
-        figSpecs(2).plots(p).contourLevels = 8;
-        figSpecs(2).plots(p).hideLegend = true;
-    end
+            figSpecs(f).plots(p).markerSize = 420;
+            figSpecs(f).plots(p).showContour = false;
 
-    for p = 1:numel(figSpecs(3).plots)
+            figSpecs(f).plots(p).showValueLabels = true;
+            figSpecs(f).plots(p).valueLabelFmt = "%.1f";
 
-        figSpecs(3).plots(p).heatmapStyle = "contour_points";
-        figSpecs(3).plots(p).colormapName = "parula";
-        figSpecs(3).plots(p).markerSize = 300;
-        figSpecs(3).plots(p).showContour = true;
-        figSpecs(3).plots(p).contourLevels = 8;
-        figSpecs(3).plots(p).hideLegend = true;
+            figSpecs(f).plots(p).yTicks = 0:20:100;
+            figSpecs(f).plots(p).yLim = [-6 106];
+
+            figSpecs(f).plots(p).xPadFrac = 0.06;
+            figSpecs(f).plots(p).hideLegend = true;
+        end
     end
 end
 
@@ -684,5 +737,456 @@ function S = local_add_missing_columns_like_reference(S, refT)
         else
             S.(v) = NaN(height(S), 1);
         end
+    end
+end
+
+function local_save_hybrid_best_candidate_table(T, opts)
+
+    pureDcMask = ...
+        abs(T.bessAcShare_pct - 0) < 1e-9 & ...
+        T.E_BESS_total_kWh > 0;
+
+    pureAcMask = ...
+        abs(T.bessAcShare_pct - 100) < 1e-9 & ...
+        T.E_BESS_total_kWh > 0;
+
+    mixedMask = ...
+        T.bessAcShare_pct > 0 & ...
+        T.bessAcShare_pct < 100 & ...
+        T.E_BESS_total_kWh > 0;
+
+    bestRows = table();
+
+    bestRows = [bestRows; ...
+        local_pick_best_candidate_row(T, pureDcMask, "Legjobb DC-csatolt rendszer")];
+
+    bestRows = [bestRows; ...
+        local_pick_best_candidate_row(T, pureAcMask, "Legjobb AC-csatolt rendszer")];
+
+    bestRows = [bestRows; ...
+        local_pick_best_candidate_row(T, mixedMask, "Legjobb AC+DC kevert rendszer")];
+
+    outDir = opts.outputFolder;
+
+    if ~exist(outDir, 'dir')
+        mkdir(outDir);
+    end
+
+    csvPath = fullfile(outDir, 'hybrid_best_candidates_summary.csv');
+    xlsxPath = fullfile(outDir, 'hybrid_best_candidates_summary.xlsx');
+    matPath = fullfile(outDir, 'hybrid_best_candidates_summary.mat');
+
+    writetable(bestRows, csvPath);
+    writetable(bestRows, xlsxPath);
+    save(matPath, 'bestRows', '-v7.3');
+
+    fprintf('\nHybrid best candidate summary saved:\n');
+    fprintf('%s\n', csvPath);
+    fprintf('%s\n', xlsxPath);
+    fprintf('%s\n', matPath);
+end
+
+
+function outRow = local_pick_best_candidate_row(T, mask, categoryName)
+
+    idxPool = find(mask & isfinite(T.netPresentValue_MHUF));
+
+    if isempty(idxPool)
+        outRow = local_empty_best_candidate_row(categoryName);
+        return;
+    end
+
+    [~, bestLocalIdx] = max(T.netPresentValue_MHUF(idxPool));
+    idx = idxPool(bestLocalIdx);
+
+    outRow = table();
+
+    outRow.Kategoria = categoryName;
+    outRow.Forras_topologia = string(T.sourceCoupling(idx));
+
+    if ismember('candidateID', T.Properties.VariableNames)
+        outRow.Jelolt_azonosito = string(T.candidateID(idx));
+    else
+        outRow.Jelolt_azonosito = "nem_elerheto";
+    end
+
+    if ismember('candidateIndex', T.Properties.VariableNames)
+        outRow.Jelolt_index = T.candidateIndex(idx);
+    else
+        outRow.Jelolt_index = idx;
+    end
+
+    outRow.Teljes_BESS_PV_arany_kWh_kWp = ...
+        T.BESS_PV_ratio_total(idx);
+
+    outRow.AC_csatolt_BESS_reszarany_pct = ...
+        T.bessAcShare_pct(idx);
+
+    outRow.Netto_jelenertek_MHUF = ...
+        T.netPresentValue_MHUF(idx);
+
+    outRow.BESS_koltseg_MHUF = ...
+        T.bessCapexOpexTotal_MHUF(idx);
+
+    outRow.Fajlagos_tarolasi_koltseg_HUF_kWh = ...
+        T.storageServiceCost_HUF_per_kWh(idx);
+
+    outRow.Energiakoltseg_megtakaritas_MHUF = ...
+        T.energyCostSavingVsZero_MHUF(idx);
+
+    outRow.Teljesitmenydij_megtakaritas_MHUF = ...
+        T.performanceSavingVsZero_MHUF(idx);
+
+    outRow.Eves_netto_megtakaritas_MHUF_ev = ...
+        T.annualNetSaving_MHUF_per_year(idx);
+
+    outRow.Szerzodott_teljesitmeny_csokkenes_pct = ...
+        T.contractReductionVsZero_pct(idx);
+
+    outRow.Marado_halozati_ingadozas_csokkenes_pct = ...
+        T.residualLoadVariabilityReduction_pct(idx);
+
+    outRow.Ekvivalens_teljes_ciklus_ev = ...
+        T.equivalentFullCycles_per_year(idx);
+
+    outRow.Vegso_SOH_pct = ...
+        T.finalSoH_pct(idx);
+end
+
+
+function outRow = local_empty_best_candidate_row(categoryName)
+
+    outRow = table();
+
+    outRow.Kategoria = categoryName;
+    outRow.Forras_topologia = "nincs_talalat";
+    outRow.Jelolt_azonosito = "nincs_talalat";
+    outRow.Jelolt_index = NaN;
+
+    outRow.Teljes_BESS_PV_arany_kWh_kWp = NaN;
+    outRow.AC_csatolt_BESS_reszarany_pct = NaN;
+
+    outRow.Netto_jelenertek_MHUF = NaN;
+    outRow.BESS_koltseg_MHUF = NaN;
+    outRow.Fajlagos_tarolasi_koltseg_HUF_kWh = NaN;
+    outRow.Energiakoltseg_megtakaritas_MHUF = NaN;
+    outRow.Teljesitmenydij_megtakaritas_MHUF = NaN;
+    outRow.Eves_netto_megtakaritas_MHUF_ev = NaN;
+    outRow.Szerzodott_teljesitmeny_csokkenes_pct = NaN;
+    outRow.Marado_halozati_ingadozas_csokkenes_pct = NaN;
+    outRow.Ekvivalens_teljes_ciklus_ev = NaN;
+    outRow.Vegso_SOH_pct = NaN;
+end
+
+
+
+
+function T = local_add_hybrid_operational_lifetime_metrics(T, cfg)
+
+    simYears = cfg.analysis.simYears;
+
+    T.bessThroughputAnnual_kWh_per_year = ...
+        T.bessThroughput_kWh ./ simYears;
+
+    T.equivalentFullCycles_total = ...
+        local_safe_divide_vec( ...
+            T.bessThroughput_kWh, ...
+            2 .* T.E_BESS_kWh);
+
+    T.equivalentFullCycles_per_year = ...
+        T.equivalentFullCycles_total ./ simYears;
+
+    T.storageServiceCost_HUF_per_kWh = ...
+        local_safe_divide_vec( ...
+            T.bessCapexOpexTotal_HUF, ...
+            T.bessThroughput_kWh);
+
+    T.storageServiceCost_HUF_per_MWh = ...
+        1000 .* T.storageServiceCost_HUF_per_kWh;
+
+    T.lcoe_HUF_per_kWh = T.storageServiceCost_HUF_per_kWh;
+    T.lcoe_HUF_per_MWh = T.storageServiceCost_HUF_per_MWh;
+end
+
+function local_save_hybrid_best_candidate_cost_bridge_figure(T, opts)
+
+    pureDcMask = ...
+        abs(T.bessAcShare_pct - 0) < 1e-9 & ...
+        T.E_BESS_total_kWh > 0;
+
+    pureAcMask = ...
+        abs(T.bessAcShare_pct - 100) < 1e-9 & ...
+        T.E_BESS_total_kWh > 0;
+
+    mixedMask = ...
+        T.bessAcShare_pct > 0 & ...
+        T.bessAcShare_pct < 100 & ...
+        T.E_BESS_total_kWh > 0;
+
+    idxDc = local_pick_best_candidate_index(T, pureDcMask);
+    idxAc = local_pick_best_candidate_index(T, pureAcMask);
+    idxMixed = local_pick_best_candidate_index(T, mixedMask);
+
+    idxList = [idxDc, idxAc, idxMixed];
+
+    if any(~isfinite(idxList))
+        warning('Nem sikerult minden hybrid osszehasonlito abra-jeloltet kivalasztani.');
+        return;
+    end
+
+    % ---------------------------------------------------------------------
+    % No BESS referenciaertekek
+    % ---------------------------------------------------------------------
+
+    refContract_kW = local_first_finite(T.bestContract_kW);
+
+    if ismember('contractCostNoBess_HUF', T.Properties.VariableNames)
+        refContractCost_HUF = local_first_finite(T.contractCostNoBess_HUF);
+    else
+        refContractCost_HUF = local_first_finite(T.contractCost_HUF);
+    end
+
+    refEnergyCost_HUF = local_first_finite(T.energyCostNoBess_HUF);
+
+    if ismember('overrunCostNoBess_HUF', T.Properties.VariableNames)
+        refOverrunCost_HUF = local_first_finite(T.overrunCostNoBess_HUF);
+    else
+        refOverrunCost_HUF = 0;
+    end
+
+    refTotalCost_HUF = ...
+        refEnergyCost_HUF + ...
+        refContractCost_HUF + ...
+        refOverrunCost_HUF;
+
+    if ismember('gridImportNoBess_kWh', T.Properties.VariableNames)
+        refGridImport_kWh = local_first_finite(T.gridImportNoBess_kWh);
+    else
+        error('A hybrid osszehasonlito abrahoz hianyzik a gridImportNoBess_kWh oszlop.');
+    end
+
+    % ---------------------------------------------------------------------
+    % Relativ mutatok: No BESS = 100 %
+    % ---------------------------------------------------------------------
+
+    caseNames = [ ...
+        "No BESS"
+        "DC BESS"
+        "AC BESS"
+        "DC+AC BESS"];
+
+    contractedPower_pct = NaN(4, 1);
+    totalCost_pct = NaN(4, 1);
+    gridEnergyUse_pct = NaN(4, 1);
+
+    contractedPower_pct(1) = 100;
+    totalCost_pct(1) = 100;
+    gridEnergyUse_pct(1) = 100;
+
+    for k = 1:numel(idxList)
+
+        idx = idxList(k);
+        row = k + 1;
+
+        candidateTotalCost_HUF = ...
+            T.energyCost_HUF(idx) + ...
+            T.contractCost_HUF(idx) + ...
+            T.overrunCost_HUF(idx);
+
+        contractedPower_pct(row) = ...
+            100 .* T.bestContract_kW(idx) ./ refContract_kW;
+
+        totalCost_pct(row) = ...
+            100 .* candidateTotalCost_HUF ./ refTotalCost_HUF;
+
+        gridEnergyUse_pct(row) = ...
+            100 .* T.gridImport_kWh(idx) ./ refGridImport_kWh;
+    end
+
+    Y = [ ...
+        contractedPower_pct, ...
+        totalCost_pct, ...
+        gridEnergyUse_pct];
+
+    % ---------------------------------------------------------------------
+    % Abra
+    % ---------------------------------------------------------------------
+
+    fig = figure( ...
+        'Name', 'hybrid_best_candidate_relative_comparison', ...
+        'Color', 'w', ...
+        'Position', [100 100 1050 520]);
+
+    ax = axes(fig);
+    hold(ax, 'on');
+
+    b = barh(ax, Y, 'grouped');
+
+    b(1).FaceColor = [0.0000 0.4470 0.7410];
+    b(2).FaceColor = [0.8500 0.3250 0.0980];
+    b(3).FaceColor = [0.4660 0.6740 0.1880];
+
+    xline(ax, 100, '--', ...
+        'No BESS referencia', ...
+        'Color', [0.25 0.25 0.25], ...
+        'LineWidth', 1.1, ...
+        'LabelVerticalAlignment', 'bottom', ...
+        'Interpreter', 'none');
+
+    local_add_grouped_barh_value_labels(ax, Y, "%.1f%%");
+
+    yticks(ax, 1:4);
+    yticklabels(ax, caseNames);
+
+    xlabel(ax, "Relativ ertek a No BESS esethez kepest [%]", ...
+        'Interpreter', 'none');
+
+    title(ax, ...
+        "PV+BESS topologiak hatasa a halozati es koltsegmutatokra", ...
+        'Interpreter', 'none');
+
+    legend(ax, ...
+        b, ...
+        [ ...
+            "Lekotott teljesitmeny"
+            "Teljes villamosenergia-koltseg"
+            "Halozati energiafelhasznalas" ...
+        ], ...
+        'Location', 'southoutside', ...
+        'Orientation', 'horizontal', ...
+        'Interpreter', 'none');
+
+    grid(ax, 'on');
+    ax.GridAlpha = 0.15;
+    ax.Box = 'off';
+    ax.FontSize = 10;
+    ax.Layer = 'top';
+
+    xMax = max(Y(:), [], 'omitnan');
+    xlim(ax, [0, max(115, 1.15 .* xMax)]);
+
+    hold(ax, 'off');
+
+    outDir = opts.outputFolder;
+
+    if ~exist(outDir, 'dir')
+        mkdir(outDir);
+    end
+
+    pngPath = fullfile(outDir, 'hybrid_legjobb_jeloltek_relativ_osszehasonlitas.png');
+    figPath = fullfile(outDir, 'hybrid_legjobb_jeloltek_relativ_osszehasonlitas.fig');
+
+    exportgraphics(fig, pngPath, 'Resolution', 300);
+    savefig(fig, figPath);
+
+    fprintf('\nHybrid relative comparison figure saved:\n');
+    fprintf('%s\n', pngPath);
+    fprintf('%s\n', figPath);
+end
+
+function local_add_grouped_barh_value_labels(ax, Y, fmt)
+
+    nGroups = size(Y, 1);
+    nBars = size(Y, 2);
+
+    groupWidth = min(0.8, nBars / (nBars + 1.5));
+
+    for i = 1:nGroups
+
+        for j = 1:nBars
+
+            value = Y(i, j);
+
+            if ~isfinite(value)
+                continue;
+            end
+
+            y = i - groupWidth / 2 + ...
+                (2 * j - 1) * groupWidth / (2 * nBars);
+
+            text(ax, value + 1.0, y, sprintf(fmt, value), ...
+                'HorizontalAlignment', 'left', ...
+                'VerticalAlignment', 'middle', ...
+                'FontSize', 8.5, ...
+                'Color', [0.15 0.15 0.15], ...
+                'Interpreter', 'none');
+        end
+    end
+end
+
+
+function local_add_stacked_bar_value_labels(ax, x, yStack, fmt)
+
+    yBottom = zeros(size(x(:)));
+
+    for j = 1:size(yStack, 2)
+
+        values = yStack(:, j);
+
+        for i = 1:numel(x)
+
+            if ~isfinite(values(i)) || abs(values(i)) < 1e-9
+                continue;
+            end
+
+            y = yBottom(i) + values(i) / 2;
+
+            text(ax, x(i), y, sprintf(fmt, values(i)), ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'middle', ...
+                'FontSize', 8.5, ...
+                'Color', [0.15 0.15 0.15], ...
+                'Interpreter', 'none');
+        end
+
+        yBottom = yBottom + values;
+    end
+end
+
+
+function idx = local_pick_best_candidate_index(T, mask)
+
+    idxPool = find(mask & isfinite(T.netPresentValue_MHUF));
+
+    if isempty(idxPool)
+        idx = NaN;
+        return;
+    end
+
+    [~, bestLocalIdx] = max(T.netPresentValue_MHUF(idxPool));
+    idx = idxPool(bestLocalIdx);
+end
+
+
+function simYears = local_get_sim_years_from_table(T)
+
+    if ismember('simYears', T.Properties.VariableNames)
+        simYears = local_first_finite(T.simYears);
+    elseif ismember('simulationYears', T.Properties.VariableNames)
+        simYears = local_first_finite(T.simulationYears);
+    elseif ismember('LifetimeYears', T.Properties.VariableNames)
+        simYears = local_first_finite(T.LifetimeYears);
+    else
+        simYears = 4;
+    end
+end
+
+
+function local_add_bar_value_labels(ax, x, value, bottom, fmt)
+
+    for i = 1:numel(x)
+
+        if ~isfinite(value(i)) || abs(value(i)) < 1e-9
+            continue;
+        end
+
+        y = bottom(i) + value(i) / 2;
+
+        text(ax, x(i), y, sprintf(fmt, value(i)), ...
+            'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'middle', ...
+            'FontSize', 8.5, ...
+            'Color', [0.15 0.15 0.15], ...
+            'Interpreter', 'none');
     end
 end

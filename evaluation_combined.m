@@ -15,7 +15,30 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
 
     %#ok<INUSD>
 
-    data = local_prepare_combined_diagnostic_columns(data, cfg);
+    % ---------------------------------------------------------------------
+    % Combined economic assumptions
+    % ---------------------------------------------------------------------
+    % Fajlagos BESS CAPEX ertekek kulon AC- es DC-csatolt BESS agra.
+    % Mertekegyseg: HUF/kWh
+    %
+    % Ezeket itt lehet gyorsan valtoztatni erzekenysegvizsgalathoz.
+    %
+    % Megjegyzes:
+    %   A teljesitmeny oldali CAPEX tovabbra is a
+    %   cfg.cost.bess_power_huf_per_kW erteket hasznalja.
+    eur_to_huf = 400;
+
+    capexDC_eur_per_kWh = 280;
+    capexAC_eur_per_kWh = 280;
+
+    capexDc_HUF_per_kWh = capexDC_eur_per_kWh * eur_to_huf;
+    capexAc_HUF_per_kWh = capexAC_eur_per_kWh * eur_to_huf;
+
+    costPars = struct();
+    costPars.capexDc_HUF_per_kWh = capexDc_HUF_per_kWh;
+    costPars.capexAc_HUF_per_kWh = capexAc_HUF_per_kWh;
+
+    data = local_prepare_combined_diagnostic_columns(data, cfg, costPars);
 
     figSpecs = struct([]);
 
@@ -289,8 +312,7 @@ function [figSpecs, data] = evaluation_combined(data, cfg, opts)
 end
 
 
-function data = local_prepare_combined_diagnostic_columns(data, cfg)
-
+function data = local_prepare_combined_diagnostic_columns(data, cfg, costPars)
     couplings = ["dc", "ac"];
 
     for c = 1:numel(couplings)
@@ -304,7 +326,7 @@ function data = local_prepare_combined_diagnostic_columns(data, cfg)
 
         T = data.(char(coupling)).candidateTable;
 
-        T = local_add_basic_combined_columns(T, cfg);
+        T = local_add_basic_combined_columns(T, cfg, coupling, costPars);
         T = local_add_zero_bess_reference_columns(T, cfg);
         T = local_add_degradation_split_columns(T);
 
@@ -313,7 +335,7 @@ function data = local_prepare_combined_diagnostic_columns(data, cfg)
 end
 
 
-function T = local_add_basic_combined_columns(T, cfg)
+function T = local_add_basic_combined_columns(T, cfg, coupling, costPars)
 
     simYears = cfg.analysis.simYears;
 
@@ -342,9 +364,30 @@ function T = local_add_basic_combined_columns(T, cfg)
     T.degradationCost_MHUF = local_col(T, 'degradationCost_HUF', NaN) / 1e6;
     T.objectiveCost_MHUF = local_col(T, 'objectiveCost_HUF', NaN) / 1e6;
 
-    capexBess_HUF = ...
-        local_col(T, 'E_BESS_kWh', 0) .* cfg.cost.bess_huf_per_kWh + ...
+    coupling = lower(string(coupling));
+
+    if coupling == "dc"
+
+        capexEnergy_HUF_per_kWh = costPars.capexDc_HUF_per_kWh;
+
+    elseif coupling == "ac"
+
+        capexEnergy_HUF_per_kWh = costPars.capexAc_HUF_per_kWh;
+
+    else
+
+        error('Unknown coupling in combined evaluation: %s', coupling);
+    end
+
+    capexBessEnergy_HUF = ...
+        local_col(T, 'E_BESS_kWh', 0) .* capexEnergy_HUF_per_kWh;
+
+    capexBessPower_HUF = ...
         local_col(T, 'P_BESS_kW', 0) .* cfg.cost.bess_power_huf_per_kW;
+
+    capexBess_HUF = ...
+        capexBessEnergy_HUF + ...
+        capexBessPower_HUF;
 
     opexBessAnnual_HUF = capexBess_HUF .* cfg.cost.bess_opex_frac_per_year;
 
@@ -381,6 +424,15 @@ function T = local_add_basic_combined_columns(T, cfg)
     bessCapexOpexTotal_HUF(zeroMask) = 0;
 
     T.bessCapex_HUF = capexBess_HUF;
+    T.capexEnergy_HUF_per_kWh = ...
+        capexEnergy_HUF_per_kWh .* ones(height(T), 1);
+
+    T.bessCapexEnergy_HUF = capexBessEnergy_HUF;
+    T.bessCapexPower_HUF = capexBessPower_HUF;
+
+    T.bessCapex_MHUF = T.bessCapex_HUF ./ 1e6;
+    T.bessCapexEnergy_MHUF = T.bessCapexEnergy_HUF ./ 1e6;
+    T.bessCapexPower_MHUF = T.bessCapexPower_HUF ./ 1e6;
     T.bessOpexAnnual_HUF = opexBessAnnual_HUF;
     T.deltaSoHTotal = deltaSoHTotal;
     T.deltaSoHAnnualEq = deltaSoHAnnualEq;
